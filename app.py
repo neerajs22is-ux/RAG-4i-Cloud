@@ -123,8 +123,10 @@ if prompt := st.chat_input("Ex: What is the lock-in period in the lease deed?"):
             else:
                 response_text, sources = query_documents(prompt)
 
-                # Explicit retrieval status (never masked as LLM phrasing).
-                if not sources:
+                # Explicit retrieval status for document questions only;
+                # routed replies (chat/out-of-scope) intentionally skip retrieval.
+                from query_router import DOCUMENT_QUERY, route_query
+                if not sources and route_query(prompt) == DOCUMENT_QUERY:
                     st.warning(
                         f"Retrieved **0 chunks** above the relevance "
                         f"threshold ({cfg.relevance_threshold}) "

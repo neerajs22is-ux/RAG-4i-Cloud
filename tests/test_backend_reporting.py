@@ -83,7 +83,10 @@ class TestIngestionReporting(unittest.TestCase):
             def get_status(self):
                 raise RuntimeError("down")
 
-        ans, sources = backend.query_documents("hi", config=cfg,
+        # NOTE: must be a document question so the router sends it to RAG
+        # ("hi" is answered conversationally without touching the store).
+        ans, sources = backend.query_documents("What is the lock-in period?",
+                                               config=cfg,
                                                vector_store=BrokenStore())
         self.assertEqual(sources, [])
         self.assertIn("unavailable", ans.lower())

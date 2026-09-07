@@ -258,8 +258,15 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
 def query_documents(query_text, config=None, vector_store=None, llm_provider=None):
     """Combined retrieve + generate (kept for UI compat).
 
-    Returns (answer: str, sources: list[dict]).
+    Conversational / out-of-scope input is answered directly by the
+    routing layer without retrieval. Document questions use the full
+    RAG pipeline unchanged. Returns (answer: str, sources: list[dict]).
     """
+    from query_router import DOCUMENT_QUERY, reply_for_route, route_query
+
+    route = route_query(query_text)
+    if route != DOCUMENT_QUERY:
+        return reply_for_route(query_text, route), []
     cfg = config or get_config()
     try:
         retrieved = retrieve_documents(
@@ -288,6 +295,13 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
             retrieved,
         )
     return answer, retrieved
+
+
+def classify_query(query_text) -> str:
+    """Routing label for a message (for UI display; routing is deterministic)."""
+    from query_router import route_query
+
+    return route_query(query_text)
 
 
 # ---------- Status helpers (for UI, all from actual checks) ---------- #

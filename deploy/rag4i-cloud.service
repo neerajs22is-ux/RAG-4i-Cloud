@@ -1,0 +1,18 @@
+[Unit]
+Description=RAG-4i-Cloud Streamlit (pilot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/RAG-4i-Cloud
+EnvironmentFile=/home/ec2-user/RAG-4i-Cloud/.env
+ExecStart=/home/ec2-user/RAG-4i-Cloud/venv/bin/streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -204,6 +204,32 @@ python migrate_to_s3.py <local-folder-with-lease-and-contract-pdfs>
 With `DOCUMENT_STORAGE=s3`, ingestion becomes
 S3 → PyPDFLoader → 1000/200 chunking → MiniLM → pgvector (all unchanged).
 
+## EC2 pilot deployment (Phase 4)
+
+Temporary pilot: Streamlit on the existing EC2 instance, browser via
+`http://<EC2-PUBLIC-IP>:8501` (restricted SG, no HTTPS/auth yet — test
+documents only). S3 + private RDS as above; LM Studio stays on your PC,
+reached from EC2 through a reverse SSH tunnel (port 1234 never opened):
+
+```bash
+# On your PC (EC2 IP changes on start; LM Studio must be running):
+ssh -i <key.pem> -N -R 1234:localhost:1234 ec2-user@<EC2-PUBLIC-IP>
+```
+
+Deploy (see `deploy/`):
+
+```bash
+scp -i <key.pem> -r . ec2-user@<EC2-PUBLIC-IP>:~/RAG-4i-Cloud
+# or: bash deploy/setup_ec2.sh  (on the instance, as ec2-user)
+sudo cp deploy/env.ec2.example .env   # then set DB_PASSWORD in .env
+sudo systemctl start rag4i-cloud.service
+```
+
+`deploy/` holds `setup_ec2.sh`, `rag4i-cloud.service` (systemd,
+restart-on-failure), `streamlit_config.toml` (port 8501), and
+`env.ec2.example`. The EC2 instance needs an S3 least-privilege IAM role
+(read-only on the bucket prefix) attached before first run.
+
 ## Local LM Studio requirements
 
 - Run LM Studio server at `LLM_BASE_URL` (default `http://localhost:1234/v1`).

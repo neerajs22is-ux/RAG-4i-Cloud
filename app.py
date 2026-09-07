@@ -111,11 +111,25 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Handle User Input
-if prompt := st.chat_input("Ex: What is the lock-in period in the lease deed?"):
+
+def _initial_suggestions():
+    """Starter questions from the real index (generic fallback if empty)."""
+    from suggestions import initial_suggestions
+    try:
+        from vector_store import get_vector_store
+        from embeddings import get_embedding_provider
+        vs = get_vector_store(cfg, get_embedding_provider(cfg))
+        files = [s["file_name"] for s in vs.list_sources()]
+    except Exception:
+        files = []
+    return initial_suggestions(files)
+
+
+def _handle_prompt(prompt_text):
+    """Single conversation pipeline for typed and suggested questions."""
     # 1. Show User Message
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").markdown(prompt_text)
+    st.session_state.messages.append({"role": "user", "content": prompt_text})
 
     # 2. Generate Assistant Response
     with st.spinner("Analyzing legal context..."):
@@ -123,54 +137,86 @@ if prompt := st.chat_input("Ex: What is the lock-in period in the lease deed?"):
             kb = get_knowledge_base_status()
             if not kb.get("ready"):
                 st.error("⚠️ Knowledge Base is not ready. Please build it in the sidebar first.")
+                return
+            from query_router import observe_query
+            memory = st.session_state.memory
+            memory.add("user", prompt_text)
+            history = memory.as_context()
+            needs_retrieval = observe_query(prompt_text, history).needs_retrieval
+            response_text, sources = query_documents(
+                prompt_text, conversation_context=history)
+
+            # Explicit retrieval status for document questions only;
+            # routed replies (chat/out-of-scope) intentionally skip retrieval.
+            if not sources and needs_retrieval:
+                st.warning(
+                    f"Retrieved **0 chunks** above the relevance "
+                    f"threshold ({cfg.relevance_threshold}) "
+                    f"(top-k={cfg.retrieval_k}). The answer below is "
+                    f"the no-context fallback, not a grounded answer."
+                )
+
+            # Structured sources: filename + page + score.
+            if sources:
+                parts = []
+                seen = set()
+                for s in sources:
+                    key = (s.get("file_name"), s.get("page"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    label = s.get("file_name") or "unknown"
+                    if s.get("page") is not None:
+                        label += f" (p. {s.get('page')})"
+                    if s.get("score") is not None:
+                        label += f" [{s.get('score'):.2f}]"
+                    parts.append(label)
+                source_text = f"\n\n**Sources:** *{', '.join(parts)}*" if parts else ""
             else:
-                from query_router import observe_query
-                memory = st.session_state.memory
-                memory.add("user", prompt)
-                history = memory.as_context()
-                needs_retrieval = observe_query(prompt, history).needs_retrieval
-                response_text, sources = query_documents(
-                    prompt, conversation_context=history)
+                source_text = ""
 
-                # Explicit retrieval status for document questions only;
-                # routed replies (chat/out-of-scope) intentionally skip retrieval.
-                if not sources and needs_retrieval:
-                    st.warning(
-                        f"Retrieved **0 chunks** above the relevance "
-                        f"threshold ({cfg.relevance_threshold}) "
-                        f"(top-k={cfg.retrieval_k}). The answer below is "
-                        f"the no-context fallback, not a grounded answer."
-                    )
+            full_response = response_text + source_text
 
-                # Structured sources: filename + page + score.
-                if sources:
-                    parts = []
-                    seen = set()
-                    for s in sources:
-                        key = (s.get("file_name"), s.get("page"))
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        label = s.get("file_name") or "unknown"
-                        if s.get("page") is not None:
-                            label += f" (p. {s.get('page')})"
-                        if s.get("score") is not None:
-                            label += f" [{s.get('score'):.2f}]"
-                        parts.append(label)
-                    source_text = f"\n\n**Sources:** *{', '.join(parts)}*" if parts else ""
-                else:
-                    source_text = ""
+            # 3. Show Assistant Message
+            with st.chat_message("assistant"):
+                st.markdown(full_response)
 
-                full_response = response_text + source_text
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            st.session_state.memory.add("assistant", full_response)
 
-                # 3. Show Assistant Message
-                with st.chat_message("assistant"):
-                    st.markdown(full_response)
-
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                st.session_state.memory.add("assistant", full_response)
+            # 4. Follow-up suggestions after grounded answers only.
+            if sources:
+                from suggestions import followup_suggestions
+                follows = followup_suggestions(prompt_text, sources)
+                st.markdown("**You may also ask:**")
+                cols = st.columns(len(follows))
+                for col, sug in zip(cols, follows):
+                    if col.button(sug, key=f"follow_{len(st.session_state.messages)}_{sug[:12]}"):
+                        st.session_state.pending_prompt = sug
+                        st.rerun()
 
         except Exception:
             # No raw stack trace for normal users; details go to console/log.
             print("UI query failed (see logs for details).")
             st.error("An error occurred while answering. Make sure LM Studio Server is running!")
+
+
+# Starter suggestions for a fresh conversation (from the real index).
+if not st.session_state.messages:
+    try:
+        if get_knowledge_base_status().get("ready"):
+            st.markdown("**Try asking:**")
+            starters = _initial_suggestions()
+            cols = st.columns(len(starters))
+            for col, sug in zip(cols, starters):
+                if col.button(sug, key=f"starter_{sug[:16]}"):
+                    st.session_state.pending_prompt = sug
+                    st.rerun()
+    except Exception:
+        print("Starter suggestions unavailable (see logs).")
+
+# Handle User Input (typed or clicked suggestion, one pipeline).
+pending = st.session_state.pop("pending_prompt", None)
+typed = st.chat_input("Ex: What is the lock-in period in the lease deed?")
+if pending or typed:
+    _handle_prompt(pending or typed)

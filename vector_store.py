@@ -27,6 +27,14 @@ class VectorStore(ABC):
     def get_status(self) -> dict:
         raise NotImplementedError
 
+    def list_sources(self, limit: int = 50):
+        """Distinct source filenames in the index (for suggestions).
+
+        Default implementation reports unknown (providers override).
+        Returns list of {"file_name": str}.
+        """
+        return []
+
     def is_ready(self) -> bool:
         try:
             return bool(self.get_status().get("ready", False))
@@ -154,6 +162,27 @@ class ChromaVectorStore(VectorStore):
         if error:
             status["error"] = error
         return status
+
+    def list_sources(self, limit: int = 50):
+        """Distinct source filenames (best-effort; [] when unavailable)."""
+        try:
+            db = self._load_existing()
+            try:
+                got = db.get(limit=limit)
+                metadatas = got.get("metadatas") if isinstance(got, dict) else None
+            except Exception:
+                metadatas = None
+            if metadatas is None:
+                got = db._collection.get(limit=limit, include=["metadatas"])
+                metadatas = got.get("metadatas") if isinstance(got, dict) else []
+            seen = []
+            for m in metadatas or []:
+                name = (m or {}).get("file_name")
+                if name and name not in seen:
+                    seen.append(name)
+            return [{"file_name": n} for n in seen[:limit]]
+        except Exception:
+            return []
 
 
 def get_vector_store(config=None, embedding_provider=None) -> VectorStore:

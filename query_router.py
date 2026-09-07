@@ -46,6 +46,33 @@ _GREETINGS = {
     "hi", "hii", "hello", "hey", "heyy", "yo", "good morning",
     "good afternoon", "good evening", "morning", "namaste",
 }
+# Single-word social tokens: any short message built ONLY from these (+
+# politeness fillers) is conversational regardless of exact combination.
+_SOCIAL_TOKENS = {
+    "hi", "hii", "hello", "hey", "heyy", "yo", "morning", "evening",
+    "afternoon", "namaste", "thanks", "thank", "please", "well", "there",
+}
+# Structural social frames with open slots (generalize unseen paraphrases):
+# "how's <slot>", "what's <slot>", "hope <slot>" where the slot is a
+# wellbeing/life token — never a document noun (guarded below).
+_SOCIAL_FRAMES = (
+    r"\bgood\s+(day|morning|afternoon|evening)\b",
+    r"\bhow\s*(?:'s|\bis|\bare)\s*(it\s+going|things|your\s+day|"
+    r"you\s+doing|you\s+been|going|going\s+on|life|your\s+day\s+going|day)\b",
+    r"\bhow\s+was\s+your\s+day\b",
+    r"\bwhat\s*(?:'s|\bis)\s*(up|on|going\s+on|new|happening)\b",
+    r"\bhope\s+you(?:'re|\bare)\s*(well|doing\s+well)\b",
+    r"\bhope\s+your\s+day\b",
+    r"\bhow\s+have\s+you\s+been\b",
+)
+# Document-domain nouns: if present, the message is substantive even when
+# it wears conversational clothing ("How is the lock-in going?").
+_DOC_NOUNS = {
+    "lease", "contract", "agreement", "deed", "clause", "period",
+    "lock-in", "lock", "rent", "party", "parties", "termination",
+    "renewal", "expiry", "expire", "deposit", "payment", "notice",
+    "obligation", "terms", "conditions", "document", "policy",
+}
 _THANKS = {
     "thanks", "thank you", "thankyou", "thx", "thanks a lot",
     "thank you so much", "much appreciated",
@@ -168,6 +195,24 @@ def _last_user_document_question(context: Optional[List[Dict]]) -> str:
     return ""
 
 
+def _looks_social(text: str) -> bool:
+    """Short social message with no document nouns.
+
+    Two structural tests (either suffices):
+      1. every token is a known social filler (any novel combination works);
+      2. matches a social frame (how's/what's/hope slots) with no doc nouns.
+    A document noun anywhere vetoes: substantive wins (safe side).
+    """
+    words = re.findall(r"[a-z']+", text)
+    if not words or len(words) > 8:
+        return False
+    if any(w in _DOC_NOUNS or w.rstrip("s") in _DOC_NOUNS for w in words):
+        return False
+    if all(w in _SOCIAL_TOKENS for w in words):
+        return True
+    return any(re.search(pat, text) for pat in _SOCIAL_FRAMES)
+
+
 def _looks_followup(text: str, context: Optional[List[Dict]]) -> Optional[str]:
     """Structural followup test. Returns reason or None."""
     if not _had_document_exchange(context):
@@ -197,6 +242,8 @@ def observe_query(message, conversation_context=None) -> QueryIntent:
         return QueryIntent(CONVERSATION, 0.95, False, "empty input")
     if t in _GREETINGS or t in _THANKS or t in _FAREWELLS or t in _WELLBEING:
         return QueryIntent(CONVERSATION, 0.95, False, "closed-class chat")
+    if _looks_social(t):
+        return QueryIntent(CONVERSATION, 0.85, False, "social frame")
     followup_reason = _looks_followup(t, context)
     if followup_reason:
         return QueryIntent(DOCUMENT_FOLLOWUP, 0.75, True, followup_reason)

@@ -142,6 +142,25 @@ class PostgresVectorStore:
             }), score))
         return out
 
+    def list_sources(self, limit: int = 50):
+        """Distinct source filenames (best-effort; [] when unavailable)."""
+        try:
+            conn = self._connect()
+        except Exception:
+            return []
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"SELECT DISTINCT file_name FROM {self.table} "
+                        f"WHERE file_name IS NOT NULL ORDER BY 1 LIMIT %s",
+                        (limit,))
+                    return [{"file_name": r[0]} for r in cur.fetchall() if r[0]]
+        except Exception:
+            return []
+        finally:
+            conn.close()
+
     def get_status(self) -> dict:
         status = {"provider": "postgres", "ready": False, "exists": False,
                   "persist_directory": None, "table": self.table,

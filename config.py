@@ -11,6 +11,9 @@ Required keys (see `.env.example`):
 PostgreSQL (Phase 2, optional; used only when VECTOR_STORE=postgres):
     DATABASE_URL (takes precedence if set) or
     DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+
+Document storage (Phase 3, optional; local default, S3 opt-in):
+    DOCUMENT_STORAGE, S3_BUCKET, S3_REGION, S3_PREFIX
 """
 
 import os
@@ -93,6 +96,11 @@ class AppConfig:
     db_name: str = "rag4i"
     db_user: str = ""
     db_password: str = ""
+    # Document storage (Phase 3). Local default; S3 opt-in via config only.
+    document_storage: str = "local"
+    s3_bucket: str = ""
+    s3_region: str = "ap-south-2"
+    s3_prefix: str = "documents/"
 
     def postgres_dsn(self) -> str:
         """Libpq connection string (DATABASE_URL wins if set)."""
@@ -135,6 +143,10 @@ def load_config() -> AppConfig:
         db_name=_get_str("DB_NAME", "rag4i"),
         db_user=_get_str("DB_USER", ""),
         db_password=_get_str("DB_PASSWORD", ""),
+        document_storage=_get_str("DOCUMENT_STORAGE", "local"),
+        s3_bucket=_get_str("S3_BUCKET", ""),
+        s3_region=_get_str("S3_REGION", "ap-south-2"),
+        s3_prefix=_get_str("S3_PREFIX", "documents/"),
     )
 
 

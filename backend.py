@@ -39,28 +39,44 @@ def create_vector_db_from_folder(folder_path, config=None,
     """
     from chunking import CHUNK_OVERLAP, CHUNK_SIZE, chunk_documents
     from document_loader import load_documents_from_folder
-    from document_storage import LocalDocumentStorage
+    from document_storage import LocalDocumentStorage, get_document_storage
     from embeddings import get_embedding_provider
     from vector_store import get_vector_store
 
     cfg = config or get_config()
+    use_s3 = (getattr(cfg, "document_storage", "local") or "local").lower() == "s3"
 
-    if not folder_path or not os.path.exists(folder_path):
-        return False, "Folder path does not exist."
-    if not os.path.isdir(folder_path):
-        return False, "Folder path is not a directory."
+    if use_s3:
+        # S3-backed ingestion: same loader/chunker/embedder, S3 as source.
+        if not getattr(cfg, "s3_bucket", ""):
+            return False, "S3 bucket is not configured (S3_BUCKET)."
+        from document_loader import load_documents_from_s3
 
-    if storage is None:
-        storage = LocalDocumentStorage(folder_path)
+        storage = storage or get_document_storage(cfg)
+        try:
+            documents, report = load_documents_from_s3(storage)
+        except Exception as e:
+            print(f"S3 ingestion failed: {e}")
+            return False, f"Failed to read from S3: {e}"
+    else:
+        if not folder_path or not os.path.exists(folder_path):
+            return False, "Folder path does not exist."
+        if not os.path.isdir(folder_path):
+            return False, "Folder path is not a directory."
 
-    # 1-2. Locate + load PDFs (per-file errors recorded, not swallowed).
-    try:
-        documents, report = load_documents_from_folder(folder_path, storage)
-    except Exception as e:
-        print(f"Ingestion failed: {e}")
-        return False, f"Failed to scan folder: {e}"
+        if storage is None:
+            storage = LocalDocumentStorage(folder_path)
+
+        # 1-2. Locate + load PDFs (per-file errors recorded, not swallowed).
+        try:
+            documents, report = load_documents_from_folder(folder_path, storage)
+        except Exception as e:
+            print(f"Ingestion failed: {e}")
+            return False, f"Failed to scan folder: {e}"
 
     if report["found"] == 0:
+        if use_s3:
+            return False, "No PDF files found in the S3 bucket/prefix."
         return False, "No PDF files found in that folder."
 
     if not documents:

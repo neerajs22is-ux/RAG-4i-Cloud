@@ -63,6 +63,8 @@ with st.sidebar:
         st.error(f"LLM: **Unreachable** ({llm.get('base_url')})")
 
     st.caption(f"Vector store: {cfg.vector_store} @ {cfg.chroma_path}")
+    storage_label = (getattr(cfg, "document_storage", "local") or "local")
+    st.caption(f"Document storage: **{storage_label.capitalize()}**")
 
 # --- MAIN CHAT INTERFACE ---
 st.subheader("💬 Ask a question about the documents")

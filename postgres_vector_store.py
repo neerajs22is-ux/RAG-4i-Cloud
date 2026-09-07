@@ -99,7 +99,7 @@ class PostgresVectorStore:
                         if not isinstance(page, int):
                             page = None
                         cur.execute(
-                            "INSERT INTO chunks "
+                            f"INSERT INTO {self.table} "
                             "(chunk_id, document_id, source_path, file_name,"
                             " page, content, embedding) "
                             "VALUES (%s,%s,%s,%s,%s,%s,%s) "
@@ -122,8 +122,8 @@ class PostgresVectorStore:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT content, document_id, source_path, file_name,"
-                    " page, chunk_id, embedding <=> %s::vector AS dist "
-                    "FROM chunks ORDER BY dist ASC LIMIT %s",
+                    f" page, chunk_id, embedding <=> %s::vector AS dist "
+                    f"FROM {self.table} ORDER BY dist ASC LIMIT %s",
                     (qvec, k),
                 )
                 rows = cur.fetchall()

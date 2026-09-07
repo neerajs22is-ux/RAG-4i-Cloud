@@ -82,3 +82,63 @@ def load_documents_from_folder(folder_path: str, storage=None):
             print(f"Error loading {pdf_file}: {e}")
             continue
     return documents, report
+
+
+def _s3_source_id(bucket: str, key: str) -> str:
+    """Stable S3 source identifier (never a local temp path)."""
+    return f"s3://{bucket}/{key}"
+
+
+def load_documents_from_s3(storage, tmp_dir=None):
+    """Load all PDFs from an S3DocumentStorage via temp downloads.
+
+    Downloads each object, loads with the existing PyPDFLoader path, then
+    rewrites metadata to the stable S3 identifier (page preserved as-is).
+    Returns (documents, report) with the same shape as folder loading.
+    Temp files are removed best-effort afterwards.
+    """
+    import hashlib
+    import shutil
+    import tempfile
+
+    keys = storage.list_documents("**/*.pdf")
+    report = {
+        "found": len(keys),
+        "succeeded": 0,
+        "failed": 0,
+        "failed_files": [],
+    }
+    documents: List = []
+    workdir = tmp_dir or tempfile.mkdtemp(prefix="s3ingest_")
+    try:
+        for key in keys:
+            try:
+                data = storage.get_document(key)
+                file_name = key.replace("\\", "/").split("/")[-1]
+                local_path = os.path.join(workdir, file_name)
+                with open(local_path, "wb") as f:
+                    f.write(data)
+                docs = load_pdf_file(local_path)
+                source_id = _s3_source_id(storage.bucket, key)
+                doc_id = hashlib.sha1(source_id.encode("utf-8")).hexdigest()
+                for doc in docs:
+                    page = doc.metadata.get("page", None)
+                    if not isinstance(page, int):
+                        page = None
+                    doc.metadata["source_path"] = source_id
+                    doc.metadata["source"] = source_id
+                    doc.metadata["file_name"] = file_name
+                    doc.metadata["page"] = page
+                    doc.metadata["document_id"] = doc_id
+                documents.extend(docs)
+                report["succeeded"] += 1
+            except Exception as e:
+                report["failed"] += 1
+                report["failed_files"].append(
+                    key.replace("\\", "/").split("/")[-1])
+                print(f"Error loading {key}: {e}")
+                continue
+    finally:
+        if tmp_dir is None:
+            shutil.rmtree(workdir, ignore_errors=True)
+    return documents, report

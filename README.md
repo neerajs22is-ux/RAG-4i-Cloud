@@ -1,10 +1,13 @@
-# RAG-4i-Cloud (Phase 2 — PostgreSQL/pgvector second provider)
+# RAG-4i-Cloud (Phase 3 — S3 document storage second provider)
 
 Provider-agnostic successor of the local `RAG-4i` CA Legal Assistant.
 Phase 1 refactored the app into providers (all local, same RAG behaviour).
 Phase 2 adds **PostgreSQL + pgvector (AWS RDS)** as a second Vector Store
 provider **alongside Chroma** — storage engine only. Embeddings, chunking,
 retrieval behaviour, prompt, and LM Studio are unchanged.
+Phase 3 adds **Amazon S3** as a second Document Storage provider
+**alongside local filesystem** — document storage layer only. The bucket
+stays private (Block Public Access, SSE-S3, versioned).
 
 ## Relationship to original RAG-4i
 
@@ -23,8 +26,9 @@ retrieval behaviour, prompt, and LM Studio are unchanged.
 
 ```text
 Application (app.py / backend.py)
-├── Document Storage Provider (document_storage.py)
-│   └── LocalDocumentStorage now, S3-ready interface
+├── Document Storage Provider (document_storage.py dispatches by DOCUMENT_STORAGE)
+│   ├── LocalDocumentStorage (default, local filesystem)
+│   └── S3DocumentStorage (s3_document_storage.py) — private S3 bucket
 ├── Ingestion (document_loader.py → chunking.py → embeddings.py → vector_store.py)
 │   └── PyPDFLoader / 1000-200 splitter / MiniLM now
 ├── Vector Store Provider (vector_store.py dispatches by VECTOR_STORE)
@@ -37,7 +41,7 @@ Application (app.py / backend.py)
 ```
 
 `VECTOR_STORE=chroma` (default) or `VECTOR_STORE=postgres` selects the
-provider via configuration only — no code changes to switch. Chroma remains
+vector provider via configuration only — no code changes to switch. Chroma remains
 the default until PostgreSQL is explicitly verified.
 
 Why each module exists:
@@ -174,6 +178,32 @@ Switch providers with configuration only (`VECTOR_STORE=chroma` remains default)
 VECTOR_STORE=postgres streamlit run app.py
 ```
 
+## S3 document storage (Phase 3)
+
+The bucket stays **private** (Block Public Access, SSE-S3, versioned, owner
+enforced). Authentication uses your local AWS credential chain
+(`aws configure` profile or env credentials); nothing is created in AWS and
+no credentials live in the repo (`.env` is git-ignored).
+
+```text
+DOCUMENT_STORAGE=local   # default, current local workflow
+DOCUMENT_STORAGE=s3      # S3-backed ingestion, config-only switch
+S3_BUCKET=<existing private bucket>
+S3_REGION=ap-south-2
+S3_PREFIX=documents/
+```
+
+Object keys are `<prefix>/<filename>` (e.g. `documents/lease.pdf`).
+Migrate only the small test set (copy-only; local originals and existing
+S3 objects are never deleted or overwritten):
+
+```bash
+python migrate_to_s3.py <local-folder-with-lease-and-contract-pdfs>
+```
+
+With `DOCUMENT_STORAGE=s3`, ingestion becomes
+S3 → PyPDFLoader → 1000/200 chunking → MiniLM → pgvector (all unchanged).
+
 ## Local LM Studio requirements
 
 - Run LM Studio server at `LLM_BASE_URL` (default `http://localhost:1234/v1`).
@@ -182,7 +212,7 @@ VECTOR_STORE=postgres streamlit run app.py
 
 ## What is NOT implemented (later phases)
 
-S3, Lambda, Bedrock, cloud GPUs, vLLM, Docker, Kubernetes, auth,
+Lambda, Bedrock, cloud GPUs, vLLM, Docker, Kubernetes, auth,
 multi-user permissions, OCR, hybrid search, BM25, reranking, query rewriting,
 conversational memory. (RDS PostgreSQL/pgvector second provider and EC2 SSH
 tunnel for local access are covered above in Phase 2; RDS stays private.)

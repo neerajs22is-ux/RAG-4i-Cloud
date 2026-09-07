@@ -1,6 +1,7 @@
-"""Document storage provider abstraction (Phase 1: local filesystem only).
+"""Document storage provider abstraction (local default + S3 opt-in).
 
-Interface is S3-ready but only LocalDocumentStorage is implemented.
+Use get_document_storage() to select by configuration:
+DOCUMENT_STORAGE=local (default) or s3. No code changes to switch.
 """
 
 import glob
@@ -68,3 +69,15 @@ class LocalDocumentStorage(DocumentStorage):
 
     def ensure_exists(self) -> bool:
         return os.path.isdir(self.base_dir)
+
+
+def get_document_storage(config=None, folder=None):
+    """Factory dispatched by config: DOCUMENT_STORAGE=local (default) or s3."""
+    name = "local"
+    if config is not None:
+        name = (getattr(config, "document_storage", name) or name).lower()
+    if name == "s3":
+        from s3_document_storage import get_s3_store
+
+        return get_s3_store(config)
+    return LocalDocumentStorage(folder or ".")

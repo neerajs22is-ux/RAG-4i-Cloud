@@ -99,9 +99,12 @@ with st.sidebar:
 # --- MAIN CHAT INTERFACE ---
 st.subheader("💬 Ask a question about the documents")
 
-# Initialize chat history
+# Initialize chat history + bounded conversation memory (recent turns only).
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "memory" not in st.session_state:
+    from conversation_memory import ConversationMemory
+    st.session_state.memory = ConversationMemory()
 
 # Display previous chat messages
 for message in st.session_state.messages:
@@ -121,12 +124,17 @@ if prompt := st.chat_input("Ex: What is the lock-in period in the lease deed?"):
             if not kb.get("ready"):
                 st.error("⚠️ Knowledge Base is not ready. Please build it in the sidebar first.")
             else:
-                response_text, sources = query_documents(prompt)
+                from query_router import observe_query
+                memory = st.session_state.memory
+                memory.add("user", prompt)
+                history = memory.as_context()
+                needs_retrieval = observe_query(prompt, history).needs_retrieval
+                response_text, sources = query_documents(
+                    prompt, conversation_context=history)
 
                 # Explicit retrieval status for document questions only;
                 # routed replies (chat/out-of-scope) intentionally skip retrieval.
-                from query_router import DOCUMENT_QUERY, route_query
-                if not sources and route_query(prompt) == DOCUMENT_QUERY:
+                if not sources and needs_retrieval:
                     st.warning(
                         f"Retrieved **0 chunks** above the relevance "
                         f"threshold ({cfg.relevance_threshold}) "
@@ -160,6 +168,7 @@ if prompt := st.chat_input("Ex: What is the lock-in period in the lease deed?"):
                     st.markdown(full_response)
 
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.session_state.memory.add("assistant", full_response)
 
         except Exception:
             # No raw stack trace for normal users; details go to console/log.

@@ -210,9 +210,49 @@ def _to_structured_source(doc, score):
     }
 
 
+def normalize_query(query_text: str) -> str:
+    """Canonical form: trim, collapse whitespace, drop trailing ?/!/..."""
+    import re
+    t = re.sub(r"\s+", " ", (query_text or "").strip())
+    return t.rstrip("?!.")
+
+
+_CORE_DROP = {
+    "is", "are", "was", "the", "a", "an", "do", "does", "tell", "about",
+    "please", "to", "of", "on", "for", "me", "you", "your", "i", "my",
+    "it", "that", "this",
+}
+
+
+def query_core(query_text: str) -> str:
+    """Light de-framed core: drop function words, keep question words and
+    content words (measured: preserves meaning, never invents terms)."""
+    import re
+    words = re.findall(r"[A-Za-z'-]+", normalize_query(query_text))
+    kept = [w for w in words if w.lower() not in _CORE_DROP]
+    return " ".join(kept).strip()
+
+
+def build_query_forms(query_text: str):
+    """Deterministic retrieval forms: [normalized, content core].
+
+    No LLM rewriting. Forms are deduplicated; the original wording always
+    participates so behavior can only gain recall, never lose it.
+    """
+    forms = []
+    for form in (normalize_query(query_text), query_core(query_text)):
+        if form and form not in forms:
+            forms.append(form)
+    return forms or [query_text]
+
+
 def retrieve_documents(query_text, config=None, vector_store=None, k=None,
                        threshold=None):
-    """Search the vector store; return structured sources (filtered by threshold)."""
+    """Search the vector store; return structured sources (filtered by threshold).
+
+    Tries each deterministic query form and keeps each chunk's best score
+    (max-pooling), then applies the unchanged top-k/threshold rule.
+    """
     from embeddings import get_embedding_provider
     from vector_store import get_vector_store
 
@@ -225,7 +265,22 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
         vector_store = get_vector_store(cfg, embedding_provider)
 
     # Raises if DB missing/unavailable -> caller maps to user message.
-    results = vector_store.search(query_text, k=top_k)
+    best = {}
+    order = []
+    for form in build_query_forms(query_text):
+        for doc, score in vector_store.search(form, k=top_k):
+            try:
+                s = float(score)
+            except (TypeError, ValueError):
+                continue
+            cid = (getattr(doc, "metadata", {}) or {}).get("chunk_id") \
+                or id(doc)
+            if cid not in best or s > best[cid][1]:
+                best[cid] = (doc, s)
+            if cid not in order:
+                order.append(cid)
+    results = sorted((best[cid] for cid in order),
+                     key=lambda pair: pair[1], reverse=True)[:top_k]
     structured = [_to_structured_source(doc, score) for doc, score in results]
     # Preserve original behaviour: relevance threshold 0.3.
     filtered = [s for s in structured if s["score"] is not None and s["score"] >= thresh]
@@ -236,8 +291,13 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
 
 def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
                     prompt_template=None):
-    """Invoke the LLM over retrieved context; return answer string."""
+    """Invoke the LLM over retrieved context; return answer string.
+
+    Raw model output is normalized at this boundary (think-block removal);
+    a think-only/empty response is reported explicitly, never shown raw.
+    """
     from llm_provider import get_llm_provider
+    from output_safety import is_empty_response, strip_think_blocks
 
     cfg = config or get_config()
     template = prompt_template or PROMPT_TEMPLATE
@@ -246,31 +306,44 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
     context_text = "\n\n---\n\n".join([s.get("content", "") for s in retrieved_sources])
     provider = llm_provider or get_llm_provider(cfg)
     try:
-        return provider.generate(context_text, question, template)
+        raw = provider.generate(context_text, question, template)
     except Exception as e:
         print(f"LLM generation failed: {e}")
         raise ConnectionError(
             "LLM endpoint is unreachable. Make sure LM Studio Server is running "
             f"at {getattr(cfg, 'llm_base_url', 'http://localhost:1234/v1')}."
         )
+    answer = strip_think_blocks(raw)
+    if is_empty_response(raw):
+        print("LLM returned only hidden reasoning or empty text.")
+        return ("The model returned an empty response. "
+                "Please try again.")
+    return answer
 
 
-def query_documents(query_text, config=None, vector_store=None, llm_provider=None):
+def query_documents(query_text, config=None, vector_store=None, llm_provider=None,
+                    conversation_context=None):
     """Combined retrieve + generate (kept for UI compat).
 
-    Conversational / out-of-scope input is answered directly by the
-    routing layer without retrieval. Document questions use the full
+    The intent observer routes first: conversation/capability/out-of-scope
+    are answered directly without retrieval; document intents (including
+    followups, whose query is anchored to the prior question) use the full
     RAG pipeline unchanged. Returns (answer: str, sources: list[dict]).
     """
-    from query_router import DOCUMENT_QUERY, reply_for_route, route_query
+    from query_router import (CAPABILITY, CONVERSATION, DOCUMENT_FOLLOWUP,
+                              OUT_OF_SCOPE, expand_followup_query,
+                              observe_query, reply_for_route)
 
-    route = route_query(query_text)
-    if route != DOCUMENT_QUERY:
-        return reply_for_route(query_text, route), []
+    obs = observe_query(query_text, conversation_context)
+    if obs.intent in (CONVERSATION, CAPABILITY, OUT_OF_SCOPE):
+        return reply_for_route(query_text, obs.intent), []
     cfg = config or get_config()
+    retrieval_query = query_text
+    if obs.intent == DOCUMENT_FOLLOWUP:
+        retrieval_query = expand_followup_query(query_text, conversation_context)
     try:
         retrieved = retrieve_documents(
-            query_text, config=cfg, vector_store=vector_store
+            retrieval_query, config=cfg, vector_store=vector_store
         )
     except Exception as e:
         print(f"Retrieval failed: {e}")

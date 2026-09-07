@@ -10,6 +10,7 @@ from config import get_config
 from ui.components import (
     WELCOME_BODY,
     WELCOME_TITLE,
+    copy_button_html,
     format_source_rows,
     friendly_error,
     load_styles,
@@ -127,11 +128,79 @@ if "messages" not in st.session_state:
 if "memory" not in st.session_state:
     from conversation_memory import ConversationMemory
     st.session_state.memory = ConversationMemory()
+if "model_state" not in st.session_state:
+    st.session_state.model_state = None
 
-# Display previous chat messages
+# --- MODEL GATE: real readiness, never simulated ---
+if st.session_state.model_state is None:
+    st.markdown(
+        '<div class="rag-welcome"><h2>RAG-4i</h2>'
+        "<p>Your document intelligence workspace.</p>"
+        "<p>Loading the assistant model…</p></div>",
+        unsafe_allow_html=True,
+    )
+    from model_warmup import READY, warmup
+    with st.spinner("Loading model…"):
+        result = warmup(cfg)
+    st.session_state.model_state = result
+    st.rerun()
+
+_model = st.session_state.model_state
+model_ready = isinstance(_model, dict) and _model.get("state") == "ready"
+if not model_ready:
+    detail = _model.get("detail", "The assistant is unavailable.") \
+        if isinstance(_model, dict) else "The assistant is unavailable."
+    st.markdown(
+        '<div class="rag-welcome"><h2>RAG-4i</h2>'
+        f"<p>{detail}</p></div>",
+        unsafe_allow_html=True,
+    )
+    if st.button("Retry connection"):
+        st.session_state.model_state = None
+        st.toast("Retrying connection…")
+        st.rerun()
+    st.stop()
+
+# Display previous chat messages (decorations re-render from stored
+# metadata every run, so reruns never wipe labels/sources/copy buttons).
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
+        if message.get("label"):
+            st.markdown(f"<p class='rag-answer-label'>{message['label']}</p>",
+                        unsafe_allow_html=True)
+        if message.get("notice") == "no-context":
+            st.warning(
+                f"Retrieved **0 chunks** above the relevance "
+                f"threshold ({cfg.relevance_threshold}) "
+                f"(top-k={cfg.retrieval_k}). The answer below is "
+                f"the no-context fallback, not a grounded answer."
+            )
         st.markdown(message["content"])
+        if message.get("sources"):
+            import streamlit.components.v1 as _components
+
+            _rows = format_source_rows(message["sources"])
+            _bits = []
+            if _rows:
+                _first = _rows[0]
+                _bits.append(_first["file_name"] or "unknown")
+                if _first["page"] is not None:
+                    _bits.append(f"p. {_first['page']}")
+                _bits.append(f"relevance {_first['score_text']}")
+            with st.expander(f"Sources · {' · '.join(_bits)}" if _rows else "Sources"):
+                for _row in _rows:
+                    _page = f" · p. {_row['page']}" if _row["page"] is not None else ""
+                    st.markdown(
+                        f'<div class="rag-source-row">{_row["file_name"] or "unknown"}'
+                        f"{_page} <span class='rag-source-score'>· relevance "
+                        f"{_row['score_text']}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+            _components.html(
+                copy_button_html(message["content"],
+                                 f"copy_{message.get('seq', 0)}"),
+                height=44,
+            )
 
 
 def _initial_suggestions():
@@ -148,13 +217,32 @@ def _initial_suggestions():
 
 
 def _handle_prompt(prompt_text):
-    """Single conversation pipeline for typed and suggested questions."""
-    # 1. Show User Message
-    st.chat_message("user").markdown(prompt_text)
-    st.session_state.messages.append({"role": "user", "content": prompt_text})
+    """Single conversation pipeline for typed and suggested questions.
 
-    # 2. Generate Assistant Response (one honest loading state).
+    State-only: appends to session_state; the display loop above renders
+    everything, so reruns never wipe labels/sources/copy buttons.
+    """
+    if "msg_seq" not in st.session_state:
+        st.session_state.msg_seq = 0
+
+    def _push(role, content, label=None, sources=None, notice=None):
+        st.session_state.msg_seq += 1
+        st.session_state.messages.append({
+            "role": role, "content": content, "seq": st.session_state.msg_seq,
+            "label": label, "sources": sources or [], "notice": notice,
+        })
+
+    # 1. Record User Message
+    _push("user", prompt_text)
+    _count_before = len(st.session_state.messages)
+
+    # 2. Generate Assistant Response (honest staged loading).
     with st.status("Working on your question…", expanded=False) as status:
+        def _phase(name):
+            status.update(
+                label="Finding relevant information…"
+                if name == "retrieving" else "Generating response…")
+
         try:
             kb = get_knowledge_base_status()
             if not kb.get("ready"):
@@ -162,22 +250,19 @@ def _handle_prompt(prompt_text):
                 st.error("⚠️ Knowledge Base is not ready. Please build it in the sidebar first.")
                 return
             from query_router import observe_query
+            from ui.components import response_label
             memory = st.session_state.memory
             memory.add("user", prompt_text)
             history = memory.as_context()
             needs_retrieval = observe_query(prompt_text, history).needs_retrieval
             response_text, sources = query_documents(
-                prompt_text, conversation_context=history)
+                prompt_text, conversation_context=history, on_phase=_phase)
 
             # Explicit retrieval status for document questions only;
             # routed replies (chat/out-of-scope) intentionally skip retrieval.
+            notice = None
             if not sources and needs_retrieval:
-                st.warning(
-                    f"Retrieved **0 chunks** above the relevance "
-                    f"threshold ({cfg.relevance_threshold}) "
-                    f"(top-k={cfg.retrieval_k}). The answer below is "
-                    f"the no-context fallback, not a grounded answer."
-                )
+                notice = "no-context"
                 display_text = friendly_error(response_text)
             else:
                 display_text = response_text
@@ -185,22 +270,6 @@ def _handle_prompt(prompt_text):
             # Sources: quiet expander, citation data preserved exactly.
             if sources:
                 rows = format_source_rows(sources)
-                title_bits = []
-                if rows:
-                    first = rows[0]
-                    title_bits.append(first["file_name"] or "unknown")
-                    if first["page"] is not None:
-                        title_bits.append(f"p. {first['page']}")
-                    title_bits.append(f"relevance {first['score_text']}")
-                with st.expander(f"Sources · {' · '.join(title_bits)}" if rows else "Sources"):
-                    for row in rows:
-                        page = f" · p. {row['page']}" if row["page"] is not None else ""
-                        st.markdown(
-                            f'<div class="rag-source-row">{row["file_name"] or "unknown"}'
-                            f"{page} <span class='rag-source-score'>· relevance "
-                            f"{row['score_text']}</span></div>",
-                            unsafe_allow_html=True,
-                        )
                 source_text = ""
                 for row in rows:
                     label = row["file_name"] or "unknown"
@@ -214,12 +283,12 @@ def _handle_prompt(prompt_text):
 
             full_response = display_text + source_text
 
-            # 3. Show Assistant Message
-            with st.chat_message("assistant"):
-                st.markdown(full_response)
-
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            # 3. Record Assistant Message (label/sources/notice ride along).
+            _label = response_label(prompt_text, sources, needs_retrieval)
+            _push("assistant", full_response, label=_label,
+                  sources=sources, notice=notice)
             st.session_state.memory.add("assistant", full_response)
+            st.session_state.pop("last_failed", None)
 
             # 4. Persist for top-level suggestion rendering (buttons must
             # exist on every rerun, not only inside prompt handling).
@@ -231,11 +300,22 @@ def _handle_prompt(prompt_text):
             # No raw stack trace for normal users; details go to console/log.
             print("UI query failed (see logs for details).")
             status.update(label="Something went wrong", state="error")
+            st.session_state.last_failed = prompt_text
             st.error(friendly_error("An error occurred while answering. "
                                     "Make sure LM Studio Server is running!"))
 
-    # Refresh so fresh suggestion buttons render immediately.
-    st.rerun()
+    # Refresh only when new messages exist (errors stay visible as-is).
+    if len(st.session_state.messages) > _count_before:
+        st.rerun()
+
+
+# Retry card for the last failed question (same pipeline, no new logic).
+if st.session_state.get("last_failed") and not st.session_state.get("pending_prompt"):
+    st.markdown("<p class='rag-prompt-label'>The last answer failed.</p>",
+                unsafe_allow_html=True)
+    if st.button("Retry answer", key="retry_last"):
+        st.session_state.pending_prompt = st.session_state.pop("last_failed")
+        st.rerun()
 
 
 # Follow-up buttons for the latest grounded answer. Rendered at top level
@@ -278,7 +358,7 @@ if not st.session_state.messages:
 pending = st.session_state.pop("pending_prompt", None)
 typed = st.chat_input(
     "Ex: What is the lock-in period in the lease deed?",
-    disabled=not kb_ready,
+    disabled=not (kb_ready and model_ready),
 )
 if pending or typed:
     _handle_prompt(pending or typed)

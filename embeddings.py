@@ -36,9 +36,19 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         return self._fn
 
 
+_PROVIDER_CACHE: dict = {}
+
+
 def get_embedding_provider(config=None) -> EmbeddingProvider:
-    """Factory returning the configured provider (MiniLM in Phase 1)."""
+    """Factory returning the configured provider (MiniLM in Phase 1).
+
+    One shared instance per model name (process-level): the underlying
+    weights load exactly once, so preloading is real and retrieval reuses
+    the warmed model. Same model, same vectors — behavior unchanged.
+    """
     model = "all-MiniLM-L6-v2"
     if config is not None:
         model = getattr(config, "embedding_model", model)
-    return HuggingFaceEmbeddingProvider(model_name=model)
+    if model not in _PROVIDER_CACHE:
+        _PROVIDER_CACHE[model] = HuggingFaceEmbeddingProvider(model_name=model)
+    return _PROVIDER_CACHE[model]

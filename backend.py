@@ -358,13 +358,17 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
 
 
 def query_documents(query_text, config=None, vector_store=None, llm_provider=None,
-                    conversation_context=None):
+                    conversation_context=None, on_phase=None):
     """Combined retrieve + generate (kept for UI compat).
 
     The intent observer routes first: conversation/capability/out-of-scope
     are answered directly without retrieval; document intents (including
     followups, whose query is anchored to the prior question) use the full
     RAG pipeline unchanged. Returns (answer: str, sources: list[dict]).
+
+    on_phase(name) is an optional progress hook ("retrieving" /
+    "generating") for honest staged loading states. It never changes
+    behavior and defaults to off.
     """
     from query_router import (CAPABILITY, CONVERSATION, DOCUMENT_FOLLOWUP,
                               OUT_OF_SCOPE, expand_followup_query,
@@ -387,6 +391,8 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
         vector_store = get_vector_store(
             cfg, get_embedding_provider(cfg))
     broad, target_file = detect_broad_scope(query_text)
+    if on_phase is not None:
+        on_phase("retrieving")
     try:
         retrieved = retrieve_documents(
             retrieval_query, config=cfg, vector_store=vector_store
@@ -414,6 +420,8 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
         return unsupported_reply(query_text), retrieved
     level = OVERVIEW_SUPPORT if broad else (
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
+    if on_phase is not None:
+        on_phase("generating")
     try:
         answer = generate_answer(
             query_text, retrieved, config=cfg, llm_provider=llm_provider,

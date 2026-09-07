@@ -64,6 +64,37 @@
   color: var(--rag-color-text-muted);
 }
 
+/* Answer-type label: small, quiet, never color-alone (text always present). */
+.rag-answer-label {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: var(--rag-color-text-muted);
+  border: 1px solid var(--rag-color-border);
+  border-radius: var(--rag-radius-pill);
+  padding: 0.1rem 0.6rem;
+  margin: 0 0 var(--rag-space-sm);
+}
+
+/* Copy-answer button (vanilla JS companion in components.py). */
+.rag-copy {
+  border: 1px solid var(--rag-color-border);
+  border-radius: var(--rag-radius-pill);
+  background: transparent;
+  color: var(--rag-color-text-secondary);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.9rem;
+  cursor: pointer;
+  transition: border-color var(--rag-motion-fast), color var(--rag-motion-fast);
+}
+.rag-copy:hover {
+  border-color: var(--rag-color-accent);
+  color: var(--rag-color-text);
+}
+.rag-copy:focus-visible {
+  outline: 2px solid var(--rag-color-accent);
+  outline-offset: 2px;
+}
+
 /* Suggestion buttons wrap into readable rows. */
 .rag-suggestions [data-testid="column"] {
   min-width: 10rem;

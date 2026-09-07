@@ -74,3 +74,44 @@ def friendly_error(backend_message: str) -> str:
 def suggestion_button_label(text: str, limit: int = 80) -> str:
     """Full suggestion text (Streamlit wraps); shortened only for keys."""
     return text or ""
+
+
+def response_label(prompt: str, sources, needs_retrieval: bool):
+    """Small answer-type label, or None for plain conversation.
+
+    Recomputes support from the same evidence (no backend change):
+    grounded -> "Grounded answer", scoped -> "Partial answer",
+    no evidence -> "Not enough context".
+    """
+    if not needs_retrieval:
+        return None
+    if not sources:
+        return "Not enough context"
+    from answer_support import DIRECT, assess_support
+    level = assess_support(prompt, sources)["level"]
+    return "Grounded answer" if level == DIRECT else "Partial answer"
+
+
+def copy_button_html(text: str, key: str) -> str:
+    """Vanilla-JS copy button (clipboard API with legacy fallback)."""
+    import json
+
+    payload = json.dumps(text or "")
+    return (
+        f"<button class='rag-copy' data-key='{html.escape(key)}' "
+        f"data-payload='{html.escape(payload)}'>Copy answer</button>"
+        "<script>(function(){"
+        "var b=document.currentScript.previousElementSibling;"
+        "if(!b||b.dataset.done)return;b.dataset.done='1';"
+        "b.addEventListener('click',function(){"
+        "var t=JSON.parse(b.dataset.payload);"
+        "function ok(){b.textContent='Copied';"
+        "setTimeout(function(){b.textContent='Copy answer';},1500);}"
+        "if(navigator.clipboard&&navigator.clipboard.writeText){"
+        "navigator.clipboard.writeText(t).then(ok,function(){legacy();});}"
+        "else{legacy();}"
+        "function legacy(){var a=document.createElement('textarea');"
+        "a.value=t;document.body.appendChild(a);a.select();"
+        "try{document.execCommand('copy');ok();}catch(e){}a.remove();}"
+        "});})();</script>"
+    )

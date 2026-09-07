@@ -161,6 +161,31 @@ class PostgresVectorStore:
         finally:
             conn.close()
 
+    def chunks_for_source(self, file_name: str, limit: int = 8):
+        """Same-file chunks (best-effort; [] when unavailable)."""
+        try:
+            conn = self._connect()
+        except Exception:
+            return []
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"SELECT content, document_id, source_path, file_name,"
+                        f" page, chunk_id FROM {self.table} "
+                        f"WHERE file_name = %s LIMIT %s",
+                        (file_name, limit))
+                    rows = cur.fetchall()
+        except Exception:
+            return []
+        finally:
+            conn.close()
+        return [(_Doc(content, {
+            "source_path": src, "source": src, "file_name": fname,
+            "page": page if isinstance(page, int) else None,
+            "document_id": doc_id, "chunk_id": cid,
+        }), None) for content, doc_id, src, fname, page, cid in rows]
+
     def get_status(self) -> dict:
         status = {"provider": "postgres", "ready": False, "exists": False,
                   "persist_directory": None, "table": self.table,

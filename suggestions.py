@@ -35,6 +35,20 @@ _GENERIC_FOLLOWUP = [
     "What obligations are described?",
 ]
 
+# Cue words licensing the "exceptions" question: only suggest it when the
+# evidence itself hints that qualified/exceptional cases may exist.
+_EXCEPTION_CUES = {
+    "exception", "exceptions", "exempt", "exemption", "exclusion",
+    "unless", "however", "otherwise", "provided", "override",
+}
+
+
+def _evidence_cues(texts) -> set:
+    words = set()
+    for text in texts:
+        words.update(re.findall(r"[a-z']+", (text or "").lower()))
+    return words & _EXCEPTION_CUES
+
 
 def _top_terms(texts, exclude=(), limit=3, min_len=5):
     """Most frequent significant words across texts (stable order)."""
@@ -88,8 +102,13 @@ def followup_suggestions(question: str, retrieved: List[Dict],
         out.append(f"Tell me more about {terms[0]}.")
     if files:
         out.append(f"What else does {files[0]} say?")
-    if len(terms) > 1:
-        out.append(f"Are there any exceptions to {terms[1]}?")
+    # Answerable-first: the "exceptions" question only when evidence cues
+    # suggest qualified cases; otherwise an evidence-anchored II form.
+    if _evidence_cues(texts):
+        out.append("Are there any exceptions to these terms?")
+    elif len(terms) > 1:
+        out.append(f"What does {files[0] if files else 'the document'} "
+                   f"say about {terms[1]}?")
     for g in _GENERIC_FOLLOWUP:
         if len(out) >= limit:
             break

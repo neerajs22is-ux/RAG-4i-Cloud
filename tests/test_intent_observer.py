@@ -108,6 +108,17 @@ class TestFollowupGroup(unittest.TestCase):
         self.assertIn("lock-in", q.lower())
         self.assertIn("why", q.lower())
 
+    def test_continuation_anchors_topic(self):
+        from query_router import expand_followup_query
+        ctx = LOCKIN_CTX + [
+            {"role": "user", "content": "What about exceptions?"},
+            {"role": "assistant",
+             "content": "No exceptions are stated in the text. " * 5},
+        ]
+        q = expand_followup_query("And payment?", ctx)
+        self.assertIn("lock-in", q.lower())  # topic, not just prior turn
+        self.assertIn("payment", q.lower())
+
 
 class TestOutOfScopeGroup(unittest.TestCase):
     def test_out_of_scope_group(self):

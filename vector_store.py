@@ -35,6 +35,14 @@ class VectorStore(ABC):
         """
         return []
 
+    def chunks_for_source(self, file_name: str, limit: int = 8):
+        """Same-file chunks as admissible file evidence for overviews.
+
+        Default: none (providers override). Returns [(doc, None)] with
+        real metadata; scores stay None (file-selected, not ranked).
+        """
+        return []
+
     def is_ready(self) -> bool:
         try:
             return bool(self.get_status().get("ready", False))
@@ -181,6 +189,33 @@ class ChromaVectorStore(VectorStore):
                 if name and name not in seen:
                     seen.append(name)
             return [{"file_name": n} for n in seen[:limit]]
+        except Exception:
+            return []
+
+    def chunks_for_source(self, file_name: str, limit: int = 8):
+        """Same-file chunks (best-effort; [] when unavailable)."""
+        from langchain_core.documents import Document
+
+        try:
+            db = self._load_existing()
+            try:
+                got = db.get(where={"file_name": file_name},
+                             limit=limit)
+                docs = got.get("documents") if isinstance(got, dict) else None
+                metas = got.get("metadatas") if isinstance(got, dict) else None
+            except Exception:
+                docs, metas = None, None
+            if docs is None:
+                got = db._collection.get(where={"file_name": file_name},
+                                         limit=limit,
+                                         include=["documents", "metadatas"])
+                docs = got.get("documents", [])
+                metas = got.get("metadatas", [])
+            out = []
+            for content, meta in zip(docs or [], metas or []):
+                out.append((Document(page_content=content or "",
+                                     metadata=dict(meta or {})), None))
+            return out
         except Exception:
             return []
 

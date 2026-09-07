@@ -23,9 +23,38 @@ Question:
 {question}
 """
 
+# Partial/unsupported-context prompt: same grounding contract, plus honest
+# scoping (state what IS established, mark the rest unknown, suggest only
+# search directions — never claim unseen sections exist).
+PARTIAL_PROMPT_TEMPLATE = """
+You are an expert legal assistant for a Chartered Accountant firm.
+Answer the question using ONLY the following context.
+
+Rules:
+- State clearly what the context DOES establish, quoting it closely.
+- If the exact question is not fully answered, say plainly what cannot
+  be established from this context. Do not guess or fill gaps.
+- You may suggest which kinds of provisions would be relevant to check
+  (for example termination, notice, or payment provisions), but present
+  them ONLY as search directions, never as claims that such sections exist.
+- Distinguish facts ("the text states...") from reasonable readings
+  ("this suggests..."). When in doubt, use factual wording.
+- Never invent contract terms, dates, parties, or mechanics.
+
+Context:
+{context}
+
+Question:
+{question}
+"""
+
 LOW_RELEVANCE_MESSAGE = (
     "I could not find enough relevant information in the documents to answer that."
 )
+
+# Support levels (see answer_support.py); OVERVIEW shares the scoping prompt.
+PARTIAL_SUPPORT = "partial"
+OVERVIEW_SUPPORT = "overview"
 
 
 # ---------- Ingestion ---------- #
@@ -290,17 +319,24 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
 # ---------- Generation ---------- #
 
 def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
-                    prompt_template=None):
+                    prompt_template=None, support_level=None):
     """Invoke the LLM over retrieved context; return answer string.
 
     Raw model output is normalized at this boundary (think-block removal);
     a think-only/empty response is reported explicitly, never shown raw.
+    support_level selects the prompt: PARTIAL/OVERVIEW evidence uses the
+    scoping prompt; DIRECT keeps the original prompt unchanged.
     """
     from llm_provider import get_llm_provider
     from output_safety import is_empty_response, strip_think_blocks
 
     cfg = config or get_config()
-    template = prompt_template or PROMPT_TEMPLATE
+    if prompt_template is not None:
+        template = prompt_template
+    elif support_level in (PARTIAL_SUPPORT, OVERVIEW_SUPPORT):
+        template = PARTIAL_PROMPT_TEMPLATE
+    else:
+        template = PROMPT_TEMPLATE
     if not retrieved_sources:
         return LOW_RELEVANCE_MESSAGE
     context_text = "\n\n---\n\n".join([s.get("content", "") for s in retrieved_sources])
@@ -341,10 +377,29 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     retrieval_query = query_text
     if obs.intent == DOCUMENT_FOLLOWUP:
         retrieval_query = expand_followup_query(query_text, conversation_context)
+    from answer_support import (DIRECT, PARTIAL, UNSUPPORTED,
+                                assess_support, detect_broad_scope,
+                                unsupported_reply)
+    from embeddings import get_embedding_provider
+    from vector_store import get_vector_store
+
+    if vector_store is None:
+        vector_store = get_vector_store(
+            cfg, get_embedding_provider(cfg))
+    broad, target_file = detect_broad_scope(query_text)
     try:
         retrieved = retrieve_documents(
             retrieval_query, config=cfg, vector_store=vector_store
         )
+        if broad and target_file:
+            # Source-aware top-up: same-file chunks as admissible file
+            # evidence (threshold still guards query-similarity results).
+            seen = {s.get("chunk_id") for s in retrieved}
+            for doc, _score in vector_store.chunks_for_source(target_file):
+                struct = _to_structured_source(doc, None)
+                if struct.get("chunk_id") not in seen:
+                    seen.add(struct.get("chunk_id"))
+                    retrieved.append(struct)
     except Exception as e:
         print(f"Retrieval failed: {e}")
         return (
@@ -354,9 +409,15 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
         )
     if not retrieved:
         return LOW_RELEVANCE_MESSAGE, []
+    support = assess_support(retrieval_query, retrieved)
+    if support["level"] == UNSUPPORTED:
+        return unsupported_reply(query_text), retrieved
+    level = OVERVIEW_SUPPORT if broad else (
+        None if support["level"] == DIRECT else PARTIAL_SUPPORT)
     try:
         answer = generate_answer(
-            query_text, retrieved, config=cfg, llm_provider=llm_provider
+            query_text, retrieved, config=cfg, llm_provider=llm_provider,
+            support_level=level,
         )
     except ConnectionError as e:
         return str(e), retrieved

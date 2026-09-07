@@ -148,8 +148,10 @@ _OUT_OF_SCOPE_PATTERNS = (
 
 # --- followup: structural dependence on prior document talk ---
 _FOLLOWUP_FRAMES = (
-    r"^why\b", r"^how come\b", r"^and\b.*\?",
-    r"\btell me more\b", r"^more\b.*\?", r"^more\.?$",
+    # NOTE: _normalize strips trailing punctuation, so frames must NOT
+    # require a literal "?".
+    r"^why\b", r"^how come\b", r"^and\b",
+    r"\btell me more\b", r"^more\b",
     r"\bwhat about\b", r"\bhow about\b",
     r"\bdoes that\b", r"\bis that\b", r"\bdo they\b", r"\bare they\b",
     r"\bwhat does that mean\b", r"\bexplain\b.*\b(that|this|it)\b",
@@ -184,15 +186,20 @@ def _had_document_exchange(context: Optional[List[Dict]]) -> bool:
     return False
 
 
-def _last_user_document_question(context: Optional[List[Dict]]) -> str:
-    if not context:
-        return ""
-    for msg in reversed(context):
+def _substantive_user_questions(context) -> List[str]:
+    """All substantive user questions, oldest first."""
+    out = []
+    for msg in context or []:
         if msg.get("role") == "user":
-            t = _normalize(msg.get("content", ""))
-            if len(_content_words(t)) >= _CONTENT_WORD_MIN:
-                return msg.get("content", "").strip()
-    return ""
+            text = msg.get("content", "").strip()
+            if len(_content_words(_normalize(text))) >= _CONTENT_WORD_MIN:
+                out.append(text)
+    return out
+
+
+def _last_user_document_question(context: Optional[List[Dict]]) -> str:
+    subs = _substantive_user_questions(context)
+    return subs[-1] if subs else ""
 
 
 def _looks_social(text: str) -> bool:
@@ -260,11 +267,20 @@ def observe_query(message, conversation_context=None) -> QueryIntent:
 
 
 def expand_followup_query(message: str, context: Optional[List[Dict]]) -> str:
-    """Anchor a followup to the last substantive user question for retrieval."""
+    """Anchor a followup for retrieval.
+
+    Continuations ("and payment?", "also…") extend the conversation TOPIC
+    (oldest substantive question); reframes ("what about…") build on the
+    most recent one. Assistant text is never used.
+    """
     from conversation_memory import coerce_context
 
-    prior = _last_user_document_question(coerce_context(context))
-    return f"{prior} {message.strip()}" if prior else message.strip()
+    subs = _substantive_user_questions(coerce_context(context))
+    if not subs:
+        return message.strip()
+    first = _normalize(message or "")
+    prior = subs[0] if first.startswith(("and ", "also ", "plus ")) and len(subs) > 1 else subs[-1]
+    return f"{prior} {message.strip()}"
 
 
 # --- back-compat thin wrappers (route-first API used by backend/UI) ---

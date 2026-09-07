@@ -42,8 +42,14 @@ with st.sidebar:
 
     kb = get_knowledge_base_status()
     if kb.get("ready"):
-        count = kb.get("chunk_count")
-        count_text = f" ({count} chunks)" if count is not None else ""
+        chunks = kb.get("chunk_count")
+        docs = kb.get("document_count")
+        parts = []
+        if docs is not None:
+            parts.append(f"{docs} docs")
+        if chunks is not None:
+            parts.append(f"{chunks} chunks")
+        count_text = f" ({', '.join(parts)})" if parts else ""
         st.success(f"Knowledge Base: **Ready**{count_text}")
     elif kb.get("exists"):
         st.warning("Knowledge Base: **Empty** (no chunks indexed)")

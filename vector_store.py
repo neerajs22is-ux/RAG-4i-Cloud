@@ -1,6 +1,7 @@
-"""Vector-store provider abstraction (Phase 1: Chroma only).
+"""Vector-store provider abstraction (Chroma default + PostgreSQL/pgvector).
 
-No code outside this module may import or instantiate Chroma.
+No code outside this module (and `postgres_vector_store.py`) may import
+or instantiate Chroma.
 Use get_vector_store() + VectorStore.build_index/search/get_status.
 """
 
@@ -90,6 +91,7 @@ class ChromaVectorStore(VectorStore):
             os.listdir(self.persist_directory)
         )
         chunk_count = None
+        document_count = None
         ready = False
         error = None
         if exists:
@@ -100,6 +102,42 @@ class ChromaVectorStore(VectorStore):
                     chunk_count = db._collection.count()
                 except Exception:
                     chunk_count = None
+                # Document count: distinct source documents (no new deps).
+                try:
+                    if chunk_count == 0:
+                        document_count = 0
+                    else:
+                        metadatas = None
+                        try:
+                            got = db.get()
+                            if isinstance(got, dict):
+                                metadatas = got.get("metadatas")
+                        except Exception:
+                            metadatas = None
+                        if metadatas is None:
+                            try:
+                                got = db._collection.get(include=["metadatas"])
+                                if isinstance(got, dict):
+                                    metadatas = got.get("metadatas")
+                            except Exception:
+                                metadatas = None
+                        if metadatas is not None:
+                            distinct = set()
+                            for m in metadatas:
+                                if not isinstance(m, dict):
+                                    continue
+                                key = (
+                                    m.get("document_id")
+                                    or m.get("source_path")
+                                    or m.get("source")
+                                    or m.get("file_name")
+                                )
+                                if key:
+                                    distinct.add(key)
+                            document_count = len(distinct)
+                except Exception:
+                    # Document count is best-effort; never break status.
+                    pass
                 ready = True if chunk_count is None else chunk_count > 0
                 if chunk_count == 0:
                     ready = False
@@ -111,6 +149,7 @@ class ChromaVectorStore(VectorStore):
             "exists": exists,
             "persist_directory": self.persist_directory,
             "chunk_count": chunk_count,
+            "document_count": document_count,
         }
         if error:
             status["error"] = error
@@ -118,7 +157,14 @@ class ChromaVectorStore(VectorStore):
 
 
 def get_vector_store(config=None, embedding_provider=None) -> VectorStore:
-    """Factory (chroma only in Phase 1)."""
+    """Factory dispatched by config: VECTOR_STORE=chroma (default) or postgres."""
+    name = "chroma"
+    if config is not None:
+        name = (getattr(config, "vector_store", name) or name).lower()
+    if name in ("postgres", "postgresql", "pgvector", "pg"):
+        from postgres_vector_store import get_postgres_store
+
+        return get_postgres_store(config, embedding_provider)
     persist = "chroma_db"
     if config is not None:
         persist = getattr(config, "chroma_path", persist)

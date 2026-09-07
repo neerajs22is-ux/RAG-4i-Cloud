@@ -7,6 +7,10 @@ root is supported via the standard library only (no extra dependency).
 Required keys (see `.env.example`):
     APP_ENV, VECTOR_STORE, CHROMA_PATH, EMBEDDING_MODEL,
     LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE
+
+PostgreSQL (Phase 2, optional; used only when VECTOR_STORE=postgres):
+    DATABASE_URL (takes precedence if set) or
+    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 """
 
 import os
@@ -81,6 +85,29 @@ class AppConfig:
     chunk_overlap: int = 200
     retrieval_k: int = 5
     relevance_threshold: float = 0.3
+    # PostgreSQL (Phase 2). Defaults point at the SSH tunnel
+    # (localhost:15432 -> rag4i-db:5432); RDS itself stays private.
+    database_url: str = ""
+    db_host: str = "localhost"
+    db_port: int = 15432
+    db_name: str = "rag4i"
+    db_user: str = ""
+    db_password: str = ""
+
+    def postgres_dsn(self) -> str:
+        """Libpq connection string (DATABASE_URL wins if set)."""
+        if self.database_url:
+            return self.database_url
+        from urllib.parse import quote_plus
+
+        user = quote_plus(self.db_user) if self.db_user else ""
+        pw = quote_plus(self.db_password) if self.db_password else ""
+        auth = ""
+        if user and pw:
+            auth = f"{user}:{pw}@"
+        elif user:
+            auth = f"{user}@"
+        return f"postgresql://{auth}{self.db_host}:{self.db_port}/{self.db_name}"
 
 
 _config_cache = None
@@ -102,6 +129,12 @@ def load_config() -> AppConfig:
         chunk_overlap=_get_int("CHUNK_OVERLAP", 200),
         retrieval_k=_get_int("RETRIEVAL_K", 5),
         relevance_threshold=_get_float("RELEVANCE_THRESHOLD", 0.3),
+        database_url=_get_str("DATABASE_URL", ""),
+        db_host=_get_str("DB_HOST", "localhost"),
+        db_port=_get_int("DB_PORT", 15432),
+        db_name=_get_str("DB_NAME", "rag4i"),
+        db_user=_get_str("DB_USER", ""),
+        db_password=_get_str("DB_PASSWORD", ""),
     )
 
 

@@ -238,6 +238,7 @@ def get_knowledge_base_status(config=None, vector_store=None) -> dict:
             "exists": False,
             "persist_directory": getattr(cfg, "chroma_path", "chroma_db"),
             "chunk_count": None,
+            "document_count": None,
             "error": str(e),
         }
 

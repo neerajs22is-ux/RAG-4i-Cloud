@@ -5,3 +5,5 @@ chromadb
 sentence-transformers
 pypdf
 streamlit
+psycopg2-binary
+pgvector

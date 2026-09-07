@@ -1,9 +1,10 @@
-# RAG-4i-Cloud (Phase 1 — Local, Cloud-Ready Refactor)
+# RAG-4i-Cloud (Phase 2 — PostgreSQL/pgvector second provider)
 
 Provider-agnostic successor of the local `RAG-4i` CA Legal Assistant.
-Phase 1 runs **100% locally** with the **same RAG behaviour** as the original;
-the new module boundaries are designed for a future AWS/cloud migration
-that is **NOT implemented yet**.
+Phase 1 refactored the app into providers (all local, same RAG behaviour).
+Phase 2 adds **PostgreSQL + pgvector (AWS RDS)** as a second Vector Store
+provider **alongside Chroma** — storage engine only. Embeddings, chunking,
+retrieval behaviour, prompt, and LM Studio are unchanged.
 
 ## Relationship to original RAG-4i
 
@@ -26,13 +27,18 @@ Application (app.py / backend.py)
 │   └── LocalDocumentStorage now, S3-ready interface
 ├── Ingestion (document_loader.py → chunking.py → embeddings.py → vector_store.py)
 │   └── PyPDFLoader / 1000-200 splitter / MiniLM now
-├── Vector Store Provider (vector_store.py)
-│   └── Chroma now, pgvector-ready interface (only file importing Chroma)
+├── Vector Store Provider (vector_store.py dispatches by VECTOR_STORE)
+│   ├── Chroma (default, local) — sole Chroma owner module
+│   └── PostgreSQL/pgvector (postgres_vector_store.py) — AWS RDS
 ├── Embedding Provider (embeddings.py)
 │   └── Hugging Face MiniLM now, swappable
 └── LLM Provider (llm_provider.py)
     └── LM Studio now (OpenAI-compatible), swappable
 ```
+
+`VECTOR_STORE=chroma` (default) or `VECTOR_STORE=postgres` selects the
+provider via configuration only — no code changes to switch. Chroma remains
+the default until PostgreSQL is explicitly verified.
 
 Why each module exists:
 
@@ -43,8 +49,13 @@ Why each module exists:
   `source_path/file_name/page/document_id`, per-file error reporting.
 - `chunking.py` — single place for 1000/200 splitter + `chunk_id`.
 - `embeddings.py` — wraps `HuggingFaceEmbeddings` so app code never imports it.
-- `vector_store.py` — `build_index/search/get_status` over Chroma;
-  append-only (no `shutil.rmtree`), sole Chroma owner.
+- `vector_store.py` — `build_index/search/get_status` interface + dispatch;
+  Chroma implementation append-only (no `shutil.rmtree`).
+- `postgres_vector_store.py` — pgvector implementation of the same interface
+  (`chunks` table, `embedding vector(384)`, additive `ON CONFLICT DO NOTHING`).
+- `migrate_to_postgres.py` — copy/additive migration
+  (PDFs → loader → chunker → embedder → PostgreSQL; Chroma never touched).
+- `compare_providers.py` — same query vs both providers (content/source/page/score).
 - `llm_provider.py` — wraps `ChatOpenAI`/LM Studio; owns base URL/key/model/temp.
 - `backend.py` — orchestrates `retrieve_documents()` vs `generate_answer()`,
   structured sources `{source, file_name, page, score, ...}`, status helpers.
@@ -88,6 +99,20 @@ LLM_MODEL=local-model
 LLM_TEMPERATURE=0.0
 ```
 
+PostgreSQL (only used when `VECTOR_STORE=postgres`; `.env` stays git-ignored,
+never commit real credentials):
+
+```text
+DB_HOST=localhost
+DB_PORT=15432
+DB_NAME=rag4i
+DB_USER=
+DB_PASSWORD=
+# Or: DATABASE_URL=postgresql://USER:PASSWORD@localhost:15432/rag4i
+```
+
+`requirements.txt` additionally includes `psycopg2-binary` + `pgvector`.
+
 ## How to run
 
 Windows:
@@ -118,6 +143,37 @@ streamlit run app.py
    `filename (p. N) [score]`. Low-relevance queries return the
    “could not find enough relevant information” fallback.
 
+## PostgreSQL/pgvector (Phase 2)
+
+RDS stays **private** (no public access). Local development connects via SSH
+local port forwarding through the existing EC2 host:
+
+```text
+Local machine → ssh -L 15432:<RDS-ENDPOINT>:5432 <SSH-USER>@<EC2-HOST>
+→ private RDS rag4i-db:5432
+```
+
+The app then connects to `localhost:15432` (`DB_HOST`/`DB_PORT`).
+DB credentials live only in local `.env` (git-ignored).
+
+Migrate a PDF folder (additive copy; Chroma is never modified):
+
+```bash
+python migrate_to_postgres.py <pdf-folder>
+```
+
+Compare both providers on the same query (scores may differ; content should match):
+
+```bash
+python compare_providers.py "What is the lock-in period?"
+```
+
+Switch providers with configuration only (`VECTOR_STORE=chroma` remains default):
+
+```bash
+VECTOR_STORE=postgres streamlit run app.py
+```
+
 ## Local LM Studio requirements
 
 - Run LM Studio server at `LLM_BASE_URL` (default `http://localhost:1234/v1`).
@@ -126,9 +182,10 @@ streamlit run app.py
 
 ## What is NOT implemented (later phases)
 
-AWS, S3, RDS, Lambda, EC2, Bedrock, PostgreSQL, pgvector, cloud GPUs, vLLM,
-Docker, Kubernetes, auth, multi-user permissions, OCR, hybrid search, BM25,
-reranking, query rewriting, conversational memory.
+S3, Lambda, Bedrock, cloud GPUs, vLLM, Docker, Kubernetes, auth,
+multi-user permissions, OCR, hybrid search, BM25, reranking, query rewriting,
+conversational memory. (RDS PostgreSQL/pgvector second provider and EC2 SSH
+tunnel for local access are covered above in Phase 2; RDS stays private.)
 
 ## Tests
 
@@ -136,6 +193,12 @@ reranking, query rewriting, conversational memory.
 python -m unittest discover -s tests -v
 ```
 
-Covers config, ingestion/chunking, metadata, retrieval, provider abstractions.
-Heavy deps (Chroma/model/LLM server) are mocked or skipped so the suite runs
-without a GPU or server.
+Covers config, ingestion/chunking, metadata, retrieval, provider abstractions,
+and PostgreSQL (mocked). Heavy deps (Chroma/model/LLM server) are mocked or
+skipped so the suite runs without a GPU or server. The real-RDS test is
+opt-in only and needs the SSH tunnel up:
+
+```bash
+$env:RUN_PG_INTEGRATION="1"
+python -m unittest tests.integration.test_postgres_rds -v
+```

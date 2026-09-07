@@ -4,8 +4,8 @@ import streamlit as st
 
 from backend import (
     check_llm_status,
-    create_vector_db_from_folder,
     get_knowledge_base_status,
+    ingest_with_report,
     query_documents,
 )
 from config import get_config
@@ -18,23 +18,53 @@ st.markdown("---")
 cfg = get_config()
 
 # --- SIDEBAR: KNOWLEDGE BASE SETUP ---
+is_cloud = (getattr(cfg, "document_storage", "local") or "local").lower() == "s3"
 with st.sidebar:
     st.header("📂 Knowledge Base")
-    st.write("Point this to your client's legal folder.")
 
-    # Input for Folder Path
-    folder_path = st.text_input("Folder Path:", placeholder=r"D:\Clients\ABC_Ltd\Legal")
+    def _show_ingest_details(details):
+        st.write(f"Documents found: **{details['found']}**")
+        st.write(f"Pages processed: **{details['pages']}**")
+        st.write(f"Chunks created: **{details['chunks']}**")
+        st.write(f"Embeddings created: **{details['embeddings']}**")
+        st.write(f"Vectors stored: **{details['vectors_stored']}**")
+        st.write(f"Failed files: **{details['failed']}**")
+        for item in details.get("failed_files", []):
+            st.write(f"❌ {item['file']}: {item['reason']}")
 
-    if st.button("Build/Update Database"):
-        if folder_path:
-            with st.spinner("Scanning documents and building index..."):
-                success, message = create_vector_db_from_folder(folder_path)
+    if is_cloud:
+        st.write(f"S3 source: `s3://{cfg.s3_bucket}/{cfg.s3_prefix}`")
+        st.caption("Cloud mode: ingestion reads from S3. Local filesystem "
+                   "paths are not available here.")
+        if st.button("Build/Update Database from S3"):
+            with st.spinner("Reading from S3 and building index..."):
+                success, message, details = ingest_with_report(None)
                 if success:
                     st.success(message)
                 else:
                     st.error(message)
-        else:
-            st.warning("Please enter a folder path.")
+                _show_ingest_details(details)
+    else:
+        st.write("Point this to your client's legal folder.")
+
+        # Input for Folder Path (local mode only: path is on the app host).
+        folder_path = st.text_input("Folder Path (local host only):",
+                                    placeholder=r"D:\Clients\ABC_Ltd\Legal")
+        if getattr(cfg, "app_env", "local") != "local":
+            st.caption("Note: this path is on the machine running the app, "
+                       "not your browser computer.")
+
+        if st.button("Build/Update Database"):
+            if folder_path:
+                with st.spinner("Scanning documents and building index..."):
+                    success, message, details = ingest_with_report(folder_path)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+                    _show_ingest_details(details)
+            else:
+                st.warning("Please enter a folder path.")
 
     st.markdown("---")
     # Real status from actual checks (no hardcoded claims).
@@ -92,6 +122,15 @@ if prompt := st.chat_input("Ex: What is the lock-in period in the lease deed?"):
                 st.error("⚠️ Knowledge Base is not ready. Please build it in the sidebar first.")
             else:
                 response_text, sources = query_documents(prompt)
+
+                # Explicit retrieval status (never masked as LLM phrasing).
+                if not sources:
+                    st.warning(
+                        f"Retrieved **0 chunks** above the relevance "
+                        f"threshold ({cfg.relevance_threshold}) "
+                        f"(top-k={cfg.retrieval_k}). The answer below is "
+                        f"the no-context fallback, not a grounded answer."
+                    )
 
                 # Structured sources: filename + page + score.
                 if sources:

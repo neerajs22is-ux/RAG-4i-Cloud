@@ -69,6 +69,9 @@ def load_documents_from_folder(folder_path: str, storage=None):
         "succeeded": 0,
         "failed": 0,
         "failed_files": [],
+        "pages": 0,
+        "chars": 0,
+        "failed_errors": {},
     }
     documents: List = []
     for pdf_file in pdf_files:
@@ -76,9 +79,13 @@ def load_documents_from_folder(folder_path: str, storage=None):
             docs = load_pdf_file(pdf_file)
             documents.extend(docs)
             report["succeeded"] += 1
+            report["pages"] += len(docs)
+            report["chars"] += sum(len(getattr(d, "page_content", "") or "")
+                                   for d in docs)
         except Exception as e:
             report["failed"] += 1
             report["failed_files"].append(os.path.basename(pdf_file))
+            report["failed_errors"][os.path.basename(pdf_file)] = str(e)
             print(f"Error loading {pdf_file}: {e}")
             continue
     return documents, report
@@ -107,6 +114,9 @@ def load_documents_from_s3(storage, tmp_dir=None):
         "succeeded": 0,
         "failed": 0,
         "failed_files": [],
+        "pages": 0,
+        "chars": 0,
+        "failed_errors": {},
     }
     documents: List = []
     workdir = tmp_dir or tempfile.mkdtemp(prefix="s3ingest_")
@@ -132,10 +142,15 @@ def load_documents_from_s3(storage, tmp_dir=None):
                     doc.metadata["document_id"] = doc_id
                 documents.extend(docs)
                 report["succeeded"] += 1
+                report["pages"] += len(docs)
+                report["chars"] += sum(len(getattr(d, "page_content", "") or "")
+                                       for d in docs)
             except Exception as e:
                 report["failed"] += 1
                 report["failed_files"].append(
                     key.replace("\\", "/").split("/")[-1])
+                report["failed_errors"][
+                    key.replace("\\", "/").split("/")[-1]] = str(e)
                 print(f"Error loading {key}: {e}")
                 continue
     finally:

@@ -30,12 +30,19 @@ LOW_RELEVANCE_MESSAGE = (
 
 # ---------- Ingestion ---------- #
 
-def create_vector_db_from_folder(folder_path, config=None,
-                                 storage=None, vector_store=None):
-    """Build/extend the index from a local folder (non-destructive).
+def _looks_like_windows_path(path: str) -> bool:
+    """True for 'C:\\...' / 'C:/...' style paths on a non-Windows host."""
+    import re
+    return os.name != "nt" and bool(re.match(r"^[A-Za-z]:[\\/]", path or ""))
 
-    Returns (success: bool, message: str). Message always includes
-    found/succeeded/failed counts and failed filenames when any fail.
+
+def ingest_with_report(folder_path, config=None,
+                       storage=None, vector_store=None):
+    """Build/extend the index, returning (success, message, details).
+
+    details always contains: source (local|s3), found, pages, chars,
+    chunks, embeddings, vectors_stored, succeeded, failed, failed_files
+    (list of {file, reason}). Zero/empty outcomes are explicit, never masked.
     """
     from chunking import CHUNK_OVERLAP, CHUNK_SIZE, chunk_documents
     from document_loader import load_documents_from_folder
@@ -45,11 +52,16 @@ def create_vector_db_from_folder(folder_path, config=None,
 
     cfg = config or get_config()
     use_s3 = (getattr(cfg, "document_storage", "local") or "local").lower() == "s3"
+    source = "s3" if use_s3 else "local"
+    details = {"source": source, "found": 0, "pages": 0, "chars": 0,
+               "chunks": 0, "embeddings": 0, "vectors_stored": 0,
+               "succeeded": 0, "failed": 0, "failed_files": []}
 
     if use_s3:
         # S3-backed ingestion: same loader/chunker/embedder, S3 as source.
+        # folder_path is intentionally unused here (cloud has no local path).
         if not getattr(cfg, "s3_bucket", ""):
-            return False, "S3 bucket is not configured (S3_BUCKET)."
+            return False, "S3 bucket is not configured (S3_BUCKET).", details
         from document_loader import load_documents_from_s3
 
         storage = storage or get_document_storage(cfg)
@@ -57,12 +69,19 @@ def create_vector_db_from_folder(folder_path, config=None,
             documents, report = load_documents_from_s3(storage)
         except Exception as e:
             print(f"S3 ingestion failed: {e}")
-            return False, f"Failed to read from S3: {e}"
+            return False, f"Failed to read from S3: {e}", details
     else:
-        if not folder_path or not os.path.exists(folder_path):
-            return False, "Folder path does not exist."
+        if not folder_path:
+            return False, "Folder path is required (local mode).", details
+        if _looks_like_windows_path(folder_path):
+            return False, (
+                "That looks like a Windows path, but the application is "
+                "running on a non-Windows host (cloud mode). Use S3-backed "
+                "ingestion instead of a browser-computer path."), details
+        if not os.path.exists(folder_path):
+            return False, "Folder path does not exist.", details
         if not os.path.isdir(folder_path):
-            return False, "Folder path is not a directory."
+            return False, "Folder path is not a directory.", details
 
         if storage is None:
             storage = LocalDocumentStorage(folder_path)
@@ -72,19 +91,43 @@ def create_vector_db_from_folder(folder_path, config=None,
             documents, report = load_documents_from_folder(folder_path, storage)
         except Exception as e:
             print(f"Ingestion failed: {e}")
-            return False, f"Failed to scan folder: {e}"
+            return False, f"Failed to scan folder: {e}", details
+
+    details.update({k: report.get(k, details[k])
+                    for k in ("found", "succeeded", "failed")})
+    # pages/chars may be absent in older report dicts (e.g. test doubles);
+    # derive from loaded documents then (None = unknown, 0 = known-empty).
+    details["pages"] = report.get("pages")
+    if details["pages"] is None:
+        details["pages"] = len(documents)
+    details["chars"] = report.get("chars")
+    if details["chars"] is None:
+        details["chars"] = sum(len(getattr(d, "page_content", "") or "")
+                               for d in documents)
+    for name in report.get("failed_files", []):
+        details["failed_files"].append({
+            "file": name,
+            "reason": report.get("failed_errors", {}).get(name, "load failed"),
+        })
 
     if report["found"] == 0:
         if use_s3:
-            return False, "No PDF files found in the S3 bucket/prefix."
-        return False, "No PDF files found in that folder."
+            return False, "No PDF files found in the S3 bucket/prefix.", details
+        return False, "No PDF files found in that folder.", details
 
     if not documents:
         failed = ", ".join(report["failed_files"]) if report["failed_files"] else "unknown"
         return False, (
             f"Found {report['found']} document(s) but none could be processed. "
             f"Failed: {report['failed']} ({failed})."
-        )
+        ), details
+
+    if details["chars"] == 0:
+        return False, (
+            f"Processed {report['succeeded']} document(s) "
+            f"({details['pages']} pages) but extracted zero usable text. "
+            "The PDFs may be scanned images (OCR not enabled) or empty."
+        ), details
 
     # 3. Chunk (1000/200 preserved).
     try:
@@ -95,23 +138,26 @@ def create_vector_db_from_folder(folder_path, config=None,
         )
     except Exception as e:
         print(f"Chunking failed: {e}")
-        return False, f"Failed to chunk documents: {e}"
+        return False, f"Failed to chunk documents: {e}", details
 
     if not chunks:
-        return False, "No text could be extracted from the PDFs."
+        return False, "No text could be extracted from the PDFs.", details
+    details["chunks"] = len(chunks)
 
     # 4-5. Embed + store (appends; never deletes existing DB).
     try:
         if vector_store is None:
             embedding_provider = get_embedding_provider(cfg)
             vector_store = get_vector_store(cfg, embedding_provider)
+        details["embeddings"] = len(chunks)
         added = vector_store.build_index(chunks)
+        details["vectors_stored"] = added
     except Exception as e:
         print(f"Vector store build failed: {e}")
         return False, (
             "Failed to build the index (vector DB unavailable). "
             "Check that dependencies are installed and chroma_db is writable."
-        )
+        ), details
 
     base = (
         f"Indexed {report['succeeded']}/{report['found']} document(s) "
@@ -120,8 +166,21 @@ def create_vector_db_from_folder(folder_path, config=None,
     )
     if report["failed"]:
         failed_names = ", ".join(report["failed_files"])
-        return True, base + f" Failed files: {failed_names}."
-    return True, base + " Success! Knowledge Base updated (existing data kept)."
+        return True, base + f" Failed files: {failed_names}.", details
+    return True, base + " Success! Knowledge Base updated (existing data kept).", details
+
+
+def create_vector_db_from_folder(folder_path, config=None,
+                                 storage=None, vector_store=None):
+    """Build/extend the index from a local folder (non-destructive).
+
+    Returns (success: bool, message: str). Message always includes
+    found/succeeded/failed counts and failed filenames when any fail.
+    """
+    ok, msg, _details = ingest_with_report(folder_path, config=config,
+                                           storage=storage,
+                                           vector_store=vector_store)
+    return ok, msg
 
 
 # ---------- Retrieval ---------- #

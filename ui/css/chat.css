@@ -1,0 +1,97 @@
+/* RAG-4i chat: messages, composer, suggestions, sources, welcome. */
+
+/* Welcome hero: one quiet moment of emphasis. */
+.rag-welcome {
+  text-align: left;
+  padding: var(--rag-space-xl) 0 var(--rag-space-lg);
+}
+.rag-welcome h2 {
+  font-size: var(--rag-type-h1-size);
+  font-weight: var(--rag-type-h1-weight);
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--rag-space-sm);
+}
+.rag-welcome p {
+  color: var(--rag-color-text-secondary);
+  max-width: 36rem;
+  margin: 0 0 var(--rag-space-lg);
+}
+.rag-prompt-label {
+  color: var(--rag-color-text-muted);
+  font-size: 0.875rem;
+  margin: var(--rag-space-lg) 0 var(--rag-space-sm);
+}
+
+/* User turns: compact, distinct, easy to scan. */
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+  background: var(--rag-color-user-bubble);
+  border: 1px solid var(--rag-color-border);
+  border-radius: var(--rag-radius-lg);
+  padding: var(--rag-space-sm) var(--rag-space-md);
+  margin-bottom: var(--rag-space-md);
+}
+
+/* Assistant turns: dominant reading surface, no card chrome. */
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+  padding: var(--rag-space-sm) 0;
+  margin-bottom: var(--rag-space-lg);
+}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) h1,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) h2,
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) h3 {
+  font-weight: var(--rag-type-h2-weight);
+  margin-top: var(--rag-space-md);
+}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) li {
+  margin-bottom: var(--rag-space-xs);
+}
+
+/* Sources: quiet expander, tabular figures for scores. */
+[data-testid="stExpander"] {
+  border: 1px solid var(--rag-color-border);
+  border-radius: var(--rag-radius-md);
+  background: var(--rag-color-surface);
+}
+.rag-source-row {
+  font-variant-numeric: tabular-nums;
+  padding: var(--rag-space-xs) 0;
+  border-top: 1px solid var(--rag-color-border);
+}
+.rag-source-row:first-child {
+  border-top: none;
+}
+.rag-source-score {
+  color: var(--rag-color-text-muted);
+}
+
+/* Suggestion buttons wrap into readable rows. */
+.rag-suggestions [data-testid="column"] {
+  min-width: 10rem;
+}
+.rag-suggestions .stButton > button {
+  width: 100%;
+  white-space: normal;
+  text-align: left;
+  min-height: 2.75rem;
+}
+
+/* Composer: the main interaction, strong focus, calm loading. */
+[data-testid="stChatInput"] {
+  border-radius: var(--rag-radius-lg);
+}
+[data-testid="stChatInput"]:focus-within {
+  border-color: var(--rag-color-accent);
+  box-shadow: 0 0 0 2px var(--rag-color-accent-soft);
+}
+[data-testid="stChatInput"] textarea:disabled {
+  opacity: 0.6;
+}
+
+@media (max-width: 640px) {
+  .rag-suggestions [data-testid="column"] {
+    min-width: 100%;
+  }
+  .stButton > button {
+    min-height: 2.75rem;
+  }
+}

@@ -1,0 +1,92 @@
+/* RAG-4i base: type, measure, header, sidebar, focus, motion. */
+
+html, body, [data-testid="stAppViewContainer"] {
+  font-family: var(--rag-type-family);
+  font-size: var(--rag-type-base-size);
+  line-height: var(--rag-type-base-leading);
+  background: var(--rag-color-background);
+  color: var(--rag-color-text);
+}
+
+.block-container {
+  max-width: var(--rag-type-measure);
+  padding-left: var(--rag-space-md);
+  padding-right: var(--rag-space-md);
+}
+
+/* Product header: quiet identity, hairline separation. */
+.rag-header {
+  border-bottom: 1px solid var(--rag-color-border);
+  padding: var(--rag-space-md) 0;
+  margin-bottom: var(--rag-space-lg);
+}
+.rag-header h1 {
+  font-size: var(--rag-type-h1-size);
+  font-weight: var(--rag-type-h1-weight);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.rag-header p {
+  color: var(--rag-color-text-secondary);
+  margin: var(--rag-space-xs) 0 0;
+}
+.rag-docline {
+  color: var(--rag-color-text-muted);
+  font-size: 0.875rem;
+  margin-top: var(--rag-space-xs);
+}
+
+/* Sidebar stays narrow and calm. */
+[data-testid="stSidebar"] {
+  background: var(--rag-color-surface);
+  border-right: 1px solid var(--rag-color-border);
+}
+[data-testid="stSidebar"] hr {
+  border-color: var(--rag-color-border);
+}
+
+/* Visible keyboard focus everywhere (a11y, not color-alone). */
+:focus-visible {
+  outline: 2px solid var(--rag-color-accent);
+  outline-offset: 2px;
+  border-radius: var(--rag-radius-sm);
+}
+
+/* Buttons: restrained, clear states. */
+.stButton > button {
+  border: 1px solid var(--rag-color-border-strong);
+  border-radius: var(--rag-radius-pill);
+  background: var(--rag-color-surface-elevated);
+  color: var(--rag-color-text);
+  transition: border-color var(--rag-motion-fast), background var(--rag-motion-fast);
+}
+.stButton > button:hover {
+  border-color: var(--rag-color-accent);
+  background: var(--rag-color-accent-soft);
+}
+.stButton > button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Status + alert surfaces use soft tones with text labels (never color alone). */
+.stStatusWidget, [data-testid="stNotification"] {
+  border-radius: var(--rag-radius-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .block-container {
+    padding-left: var(--rag-space-sm);
+    padding-right: var(--rag-space-sm);
+  }
+  .rag-header h1 {
+    font-size: 1.4rem;
+  }
+}

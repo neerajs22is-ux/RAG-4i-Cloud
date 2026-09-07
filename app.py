@@ -1,5 +1,3 @@
-import os
-
 import streamlit as st
 
 from backend import (
@@ -9,18 +7,24 @@ from backend import (
     query_documents,
 )
 from config import get_config
+from ui.components import (
+    WELCOME_BODY,
+    WELCOME_TITLE,
+    format_source_rows,
+    friendly_error,
+    load_styles,
+)
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="CA Legal Assistant", layout="wide")
-st.title("⚖️ CA Firm Legal Document Assistant")
-st.markdown("---")
+st.set_page_config(page_title="RAG-4i — Document Assistant", layout="centered")
+st.markdown(load_styles(), unsafe_allow_html=True)
 
 cfg = get_config()
 
-# --- SIDEBAR: KNOWLEDGE BASE SETUP ---
+# --- SIDEBAR: KNOWLEDGE BASE SETUP (controls unchanged) ---
 is_cloud = (getattr(cfg, "document_storage", "local") or "local").lower() == "s3"
 with st.sidebar:
-    st.header("📂 Knowledge Base")
+    st.header("Knowledge base")
 
     def _show_ingest_details(details):
         st.write(f"Documents found: **{details['found']}**")
@@ -71,7 +75,8 @@ with st.sidebar:
     st.write(f"Environment: **{cfg.app_env.capitalize()}**")
 
     kb = get_knowledge_base_status()
-    if kb.get("ready"):
+    kb_ready = bool(kb.get("ready"))
+    if kb_ready:
         chunks = kb.get("chunk_count")
         docs = kb.get("document_count")
         parts = []
@@ -96,9 +101,26 @@ with st.sidebar:
     storage_label = (getattr(cfg, "document_storage", "local") or "local")
     st.caption(f"Document storage: **{storage_label.capitalize()}**")
 
-# --- MAIN CHAT INTERFACE ---
-st.subheader("💬 Ask a question about the documents")
+# --- HEADER: quiet identity + live document status ---
+if kb_ready:
+    _docline = "Documents ready"
+    _counts = []
+    if kb.get("document_count") is not None:
+        _counts.append(f"{kb['document_count']} documents")
+    if kb.get("chunk_count") is not None:
+        _counts.append(f"{kb['chunk_count']} indexed chunks")
+    if _counts:
+        _docline += " · " + " · ".join(_counts)
+else:
+    _docline = "Document workspace"
+st.markdown(
+    f'<div class="rag-header"><h1>RAG-4i</h1>'
+    f"<p>Ask questions about your connected documents.</p>"
+    f'<p class="rag-docline">{_docline}</p></div>',
+    unsafe_allow_html=True,
+)
 
+# --- MAIN CHAT INTERFACE ---
 # Initialize chat history + bounded conversation memory (recent turns only).
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -131,11 +153,12 @@ def _handle_prompt(prompt_text):
     st.chat_message("user").markdown(prompt_text)
     st.session_state.messages.append({"role": "user", "content": prompt_text})
 
-    # 2. Generate Assistant Response
-    with st.spinner("Analyzing legal context..."):
+    # 2. Generate Assistant Response (one honest loading state).
+    with st.status("Working on your question…", expanded=False) as status:
         try:
             kb = get_knowledge_base_status()
             if not kb.get("ready"):
+                status.update(label="Knowledge base not ready", state="error")
                 st.error("⚠️ Knowledge Base is not ready. Please build it in the sidebar first.")
                 return
             from query_router import observe_query
@@ -155,44 +178,61 @@ def _handle_prompt(prompt_text):
                     f"(top-k={cfg.retrieval_k}). The answer below is "
                     f"the no-context fallback, not a grounded answer."
                 )
+                display_text = friendly_error(response_text)
+            else:
+                display_text = response_text
 
-            # Structured sources: filename + page + score.
+            # Sources: quiet expander, citation data preserved exactly.
             if sources:
-                parts = []
-                seen = set()
-                for s in sources:
-                    key = (s.get("file_name"), s.get("page"))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    label = s.get("file_name") or "unknown"
-                    if s.get("page") is not None:
-                        label += f" (p. {s.get('page')})"
-                    if s.get("score") is not None:
-                        label += f" [{s.get('score'):.2f}]"
-                    parts.append(label)
-                source_text = f"\n\n**Sources:** *{', '.join(parts)}*" if parts else ""
+                rows = format_source_rows(sources)
+                title_bits = []
+                if rows:
+                    first = rows[0]
+                    title_bits.append(first["file_name"] or "unknown")
+                    if first["page"] is not None:
+                        title_bits.append(f"p. {first['page']}")
+                    title_bits.append(f"relevance {first['score_text']}")
+                with st.expander(f"Sources · {' · '.join(title_bits)}" if rows else "Sources"):
+                    for row in rows:
+                        page = f" · p. {row['page']}" if row["page"] is not None else ""
+                        st.markdown(
+                            f'<div class="rag-source-row">{row["file_name"] or "unknown"}'
+                            f"{page} <span class='rag-source-score'>· relevance "
+                            f"{row['score_text']}</span></div>",
+                            unsafe_allow_html=True,
+                        )
+                source_text = ""
+                for row in rows:
+                    label = row["file_name"] or "unknown"
+                    if row["page"] is not None:
+                        label += f" (p. {row['page']})"
+                    label += f" [{row['score_text']}]"
+                    source_text += label + ", "
+                source_text = f"\n\n**Sources:** *{source_text.rstrip(', ')}*" if rows else ""
             else:
                 source_text = ""
 
-            full_response = response_text + source_text
+            full_response = display_text + source_text
 
             # 3. Show Assistant Message
             with st.chat_message("assistant"):
                 st.markdown(full_response)
 
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                st.session_state.memory.add("assistant", full_response)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            st.session_state.memory.add("assistant", full_response)
 
-                # 4. Persist for top-level suggestion rendering (buttons must
-                # exist on every rerun, not only inside prompt handling).
-                from suggestions import remember_followups
-                remember_followups(st.session_state, prompt_text, sources)
+            # 4. Persist for top-level suggestion rendering (buttons must
+            # exist on every rerun, not only inside prompt handling).
+            from suggestions import remember_followups
+            remember_followups(st.session_state, prompt_text, sources)
+            status.update(label="Done", state="complete")
 
         except Exception:
             # No raw stack trace for normal users; details go to console/log.
             print("UI query failed (see logs for details).")
-            st.error("An error occurred while answering. Make sure LM Studio Server is running!")
+            status.update(label="Something went wrong", state="error")
+            st.error(friendly_error("An error occurred while answering. "
+                                    "Make sure LM Studio Server is running!"))
 
     # Refresh so fresh suggestion buttons render immediately.
     st.rerun()
@@ -212,22 +252,33 @@ if _followup_specs:
                 st.session_state.pending_prompt = _spec["label"]
             st.rerun()
 
-# Starter suggestions for a fresh conversation (from the real index).
+# Welcome hero + starter suggestions for a fresh conversation.
 if not st.session_state.messages:
+    st.markdown(
+        f'<div class="rag-welcome"><h2>{WELCOME_TITLE}</h2><p>{WELCOME_BODY}</p></div>',
+        unsafe_allow_html=True,
+    )
     try:
         if get_knowledge_base_status().get("ready"):
-            st.markdown("**Try asking:**")
+            st.markdown('<p class="rag-prompt-label">Try asking</p>',
+                        unsafe_allow_html=True)
             starters = _initial_suggestions()
             cols = st.columns(len(starters))
-            for col, sug in zip(cols, starters):
-                if col.button(sug, key=f"starter_{sug[:16]}"):
+            for i, (col, sug) in enumerate(zip(cols, starters)):
+                if col.button(sug, key=f"starter_{i}"):
                     st.session_state.pending_prompt = sug
                     st.rerun()
+        else:
+            st.info("Add documents using the Knowledge base panel, "
+                    "then come back and ask away.")
     except Exception:
         print("Starter suggestions unavailable (see logs).")
 
 # Handle User Input (typed or clicked suggestion, one pipeline).
 pending = st.session_state.pop("pending_prompt", None)
-typed = st.chat_input("Ex: What is the lock-in period in the lease deed?")
+typed = st.chat_input(
+    "Ex: What is the lock-in period in the lease deed?",
+    disabled=not kb_ready,
+)
 if pending or typed:
     _handle_prompt(pending or typed)

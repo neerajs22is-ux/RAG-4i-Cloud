@@ -181,25 +181,36 @@ def _handle_prompt(prompt_text):
             with st.chat_message("assistant"):
                 st.markdown(full_response)
 
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            st.session_state.memory.add("assistant", full_response)
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.session_state.memory.add("assistant", full_response)
 
-            # 4. Follow-up suggestions after grounded answers only.
-            if sources:
-                from suggestions import followup_suggestions
-                follows = followup_suggestions(prompt_text, sources)
-                st.markdown("**You may also ask:**")
-                cols = st.columns(len(follows))
-                for col, sug in zip(cols, follows):
-                    if col.button(sug, key=f"follow_{len(st.session_state.messages)}_{sug[:12]}"):
-                        st.session_state.pending_prompt = sug
-                        st.rerun()
+                # 4. Persist for top-level suggestion rendering (buttons must
+                # exist on every rerun, not only inside prompt handling).
+                from suggestions import remember_followups
+                remember_followups(st.session_state, prompt_text, sources)
 
         except Exception:
             # No raw stack trace for normal users; details go to console/log.
             print("UI query failed (see logs for details).")
             st.error("An error occurred while answering. Make sure LM Studio Server is running!")
 
+    # Refresh so fresh suggestion buttons render immediately.
+    st.rerun()
+
+
+# Follow-up buttons for the latest grounded answer. Rendered at top level
+# on EVERY rerun so clicks always materialize (this was the bug: buttons
+# previously existed only inside prompt handling, so clicks were lost).
+from suggestions import current_followups as _current_followups
+_followup_specs = _current_followups(st.session_state)
+if _followup_specs:
+    st.markdown("**You may also ask:**")
+    _cols = st.columns(len(_followup_specs))
+    for _col, _spec in zip(_cols, _followup_specs):
+        if _col.button(_spec["label"], key=_spec["key"]):
+            if "pending_prompt" not in st.session_state:
+                st.session_state.pending_prompt = _spec["label"]
+            st.rerun()
 
 # Starter suggestions for a fresh conversation (from the real index).
 if not st.session_state.messages:

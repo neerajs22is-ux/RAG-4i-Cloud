@@ -99,3 +99,31 @@ def followup_suggestions(question: str, retrieved: List[Dict],
     while len(out) < limit:
         out.append("What other details are in these documents?")
     return out[:limit]
+
+
+def remember_followups(state, prompt_text, sources):
+    """Persist last grounded answer for top-level button rendering.
+
+    Pure dict logic (Streamlit session-state compatible) so reruns render
+    buttons without re-running the pipeline. Cleared when there are no
+    sources so stale buttons never linger.
+    """
+    if sources:
+        state["last_followups"] = {"q": prompt_text, "sources": sources,
+                                   "seq": len(state.get("messages", []))}
+    else:
+        state["last_followups"] = None
+
+
+def current_followups(state, limit: int = 3):
+    """Button specs for the latest grounded answer, or None.
+
+    Keys embed the message count so a new answer retires stale buttons.
+    """
+    saved = state.get("last_followups")
+    if not saved or not saved.get("sources"):
+        return None
+    follows = followup_suggestions(saved["q"], saved["sources"], limit)
+    seq = len(state.get("messages", []))
+    return [{"label": sug, "key": f"follow_{seq}_{i}"}
+            for i, sug in enumerate(follows)]

@@ -279,6 +279,10 @@ def build_query_forms(query_text: str):
 
     No LLM rewriting. Forms are deduplicated; the original wording always
     participates so behavior can only gain recall, never lose it.
+
+    NOTE: a curated legal-synonym third form was measured against MiniLM
+    and consistently scored lowest of all forms (it never became the
+    max-pooled winner), so it was deliberately NOT shipped.
     """
     forms = []
     for form in (normalize_query(query_text), query_core(query_text)):
@@ -401,8 +405,8 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
         on_phase("generating")
     try:
         answer = generate_answer(
-            query_text, prepared["retrieved"], config=cfg,
-            llm_provider=prepared["provider"],
+            prepared.get("effective", query_text), prepared["retrieved"],
+            config=cfg, llm_provider=prepared["provider"],
             support_level=prepared["support_level"],
         )
     except ConnectionError as e:
@@ -429,9 +433,13 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
       failed (bool), answer (str|None: set when decided without the LLM),
       retrieved, support_level, provider.
     UNSUPPORTED never reaches generation: answer is set, no LLM needed.
+    PARTIAL with missing terms yields one deterministic clarification
+    (never a loop: confirmations resolve to the original question first).
     """
     from answer_support import (DIRECT, PARTIAL, UNSUPPORTED,
-                                assess_support, detect_broad_scope,
+                                assess_support, build_clarification,
+                                detect_broad_scope,
+                                resolve_effective_question,
                                 unsupported_reply)
     from embeddings import get_embedding_provider
     from llm_provider import get_llm_provider
@@ -442,10 +450,14 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         vector_store = get_vector_store(
             cfg, get_embedding_provider(cfg))
     provider = llm_provider or get_llm_provider(cfg)
-    retrieval_query = query_text
-    if obs.intent == DOCUMENT_FOLLOWUP:
-        retrieval_query = expand_followup_query(query_text, conversation_context)
-    broad, target_file = detect_broad_scope(query_text)
+    effective, already_clarified = resolve_effective_question(
+        query_text, conversation_context)
+    retrieval_query = effective
+    if already_clarified or obs.intent == DOCUMENT_FOLLOWUP:
+        # Confirmed questions need their topic context too: expand the
+        # original question the same way a follow-up would be expanded.
+        retrieval_query = expand_followup_query(effective, conversation_context)
+    broad, target_file = detect_broad_scope(effective)
     if on_phase is not None:
         on_phase("retrieving")
     try:
@@ -476,19 +488,29 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         return {"failed": True, "answer": (
             "The knowledge base is unavailable. Please build the index first "
             "and check that the vector database is accessible."),
-            "retrieved": [], "support_level": None, "provider": provider}
+            "retrieved": [], "support_level": None, "provider": provider,
+            "effective": effective}
     if not retrieved:
         return {"failed": False, "answer": LOW_RELEVANCE_MESSAGE,
-                "retrieved": [], "support_level": None, "provider": provider}
+                "retrieved": [], "support_level": None, "provider": provider,
+                "effective": effective}
     support = assess_support(retrieval_query, retrieved)
     if support["level"] == UNSUPPORTED:
-        return {"failed": False, "answer": unsupported_reply(query_text),
+        return {"failed": False, "answer": unsupported_reply(effective),
                 "retrieved": retrieved, "support_level": None,
-                "provider": provider}
+                "provider": provider, "effective": effective}
+    if (support["level"] == PARTIAL and support.get("missing")
+            and not already_clarified):
+        return {"failed": False,
+                "answer": build_clarification(
+                    effective, support, retrieved),
+                "retrieved": retrieved, "support_level": None,
+                "provider": provider, "effective": effective}
     level = OVERVIEW_SUPPORT if broad else (
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
     return {"failed": False, "answer": None, "retrieved": retrieved,
-            "support_level": level, "provider": provider}
+            "support_level": level, "provider": provider,
+            "effective": effective}
 
 
 def preview_answer(query_text, config=None, vector_store=None,
@@ -565,8 +587,9 @@ def stream_answer(query_text, config=None, vector_store=None,
 
     def _gen():
         try:
-            for raw in provider.generate_stream(context_text, query_text,
-                                                template):
+            for raw in provider.generate_stream(
+                    context_text, prepared.get("effective", query_text),
+                    template):
                 safe = sanitizer.feed(raw)
                 if safe:
                     yield safe

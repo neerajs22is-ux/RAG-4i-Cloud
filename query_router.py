@@ -266,12 +266,15 @@ def observe_query(message, conversation_context=None) -> QueryIntent:
     return QueryIntent(DOCUMENT_QUERY, 0.6, True, "default: substantive")
 
 
-def expand_followup_query(message: str, context: Optional[List[Dict]]) -> str:
-    """Anchor a followup for retrieval.
+def expand_followup_query(message: str, context: Optional[List[Dict]],
+                          max_chars: int = 200) -> str:
+    """Anchor a followup for retrieval with topic selection.
 
     Continuations ("and payment?", "also…") extend the conversation TOPIC
     (oldest substantive question); reframes ("what about…") build on the
-    most recent one. Assistant text is never used.
+    most recent one. The anchor keeps natural sentence form — measured to
+    retrieve better than term bags on MiniLM — truncated to max_chars.
+    Assistant text is never used.
     """
     from conversation_memory import coerce_context
 
@@ -279,8 +282,12 @@ def expand_followup_query(message: str, context: Optional[List[Dict]]) -> str:
     if not subs:
         return message.strip()
     first = _normalize(message or "")
-    prior = subs[0] if first.startswith(("and ", "also ", "plus ")) and len(subs) > 1 else subs[-1]
-    return f"{prior} {message.strip()}"
+    if first.startswith(("and ", "also ", "plus ")) and len(subs) > 1:
+        prior = subs[0]
+    else:
+        prior = subs[-1]
+    composed = f"{prior} {message.strip()}"
+    return composed[:max_chars].strip() or message.strip()
 
 
 # --- back-compat thin wrappers (route-first API used by backend/UI) ---

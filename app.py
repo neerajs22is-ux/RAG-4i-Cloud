@@ -258,6 +258,8 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         if message.get("strength"):
             st.caption(message["strength"])
+        if message.get("guard_note"):
+            st.caption(message["guard_note"])
         if message.get("sources"):
             import streamlit.components.v1 as _components
 
@@ -286,16 +288,17 @@ for message in st.session_state.messages:
 
 
 def _initial_suggestions():
-    """Starter questions, validated against the real answer path.
+    """Starter questions, probed against the index with per-session cache.
 
-    Only questions that would reach generation (routing, broad-scope
-    top-up, support assessment) are shown; the plain filename fallback
-    fills any remaining slots, so output is never worse than before.
+    Only questions that actually retrieve (>=1 hit through the real
+    thresholded pipeline) are shown; the plain filename fallback fills
+    any remaining slots, so output is never worse than before.
     """
     from suggestions import grounded_initial_suggestions, initial_suggestions
     try:
         from vector_store import get_vector_store
         from embeddings import get_embedding_provider
+        from backend import retrieve_documents
         vs = get_vector_store(cfg, get_embedding_provider(cfg))
         files = [s["file_name"] for s in vs.list_sources()]
     except Exception:
@@ -325,12 +328,12 @@ def _handle_prompt(prompt_text):
         st.session_state.msg_seq = 0
 
     def _push(role, content, label=None, sources=None, notice=None,
-              strength=None):
+              strength=None, guard_note=None):
         st.session_state.msg_seq += 1
         st.session_state.messages.append({
             "role": role, "content": content, "seq": st.session_state.msg_seq,
             "label": label, "sources": sources or [], "notice": notice,
-            "strength": strength,
+            "strength": strength, "guard_note": guard_note,
         })
 
     # 1. Record User Message
@@ -431,15 +434,25 @@ def _handle_prompt(prompt_text):
 
         full_response = display_text + source_text
 
-        # 3. Record Assistant Message (label/sources/notice ride along).
-        # The live stream above already showed this turn; the trailing
-        # rerun re-renders everything from state (no duplication: each
-        # run renders live output once, then state once).
+    # 3. Record Assistant Message (label/sources/notice ride along).
+    # The live stream above already showed this turn; the trailing
+    # rerun re-renders everything from state (no duplication: each
+    # run renders live output once, then state once).
         _label = response_label(prompt_text, sources, needs_retrieval)
+        from answer_support import citation_guard
         from ui.components import retrieval_strength
+        _guard = citation_guard(display_text, sources) \
+            if sources else {"flagged": [], "count": 0, "total": 0}
+        _guard_note = None
+        if _guard["count"]:
+            if _label == "Grounded answer" and _guard["count"] > _guard["total"] / 2:
+                _label = "Partial answer"
+            _guard_note = (f"({_guard['count']} of {_guard['total']} "
+                           f"statements unverified against sources)")
         _push("assistant", full_response, label=_label,
               sources=sources, notice=notice,
-              strength=retrieval_strength(sources))
+              strength=retrieval_strength(sources),
+              guard_note=_guard_note)
         st.session_state.memory.add("assistant", full_response)
         st.session_state.pop("last_failed", None)
 

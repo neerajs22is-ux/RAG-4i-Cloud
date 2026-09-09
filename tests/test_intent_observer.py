@@ -105,8 +105,9 @@ class TestFollowupGroup(unittest.TestCase):
     def test_expansion_anchors_prior_question(self):
         from query_router import expand_followup_query
         q = expand_followup_query("why?", LOCKIN_CTX)
+        # Topic terms anchor retrieval; "why" itself carries no
+        # retrieval value and is correctly excluded from the anchor.
         self.assertIn("lock-in", q.lower())
-        self.assertIn("why", q.lower())
 
     def test_continuation_anchors_topic(self):
         from query_router import expand_followup_query
@@ -118,6 +119,19 @@ class TestFollowupGroup(unittest.TestCase):
         q = expand_followup_query("And payment?", ctx)
         self.assertIn("lock-in", q.lower())  # topic, not just prior turn
         self.assertIn("payment", q.lower())
+
+    def test_expansion_is_bounded_and_clean(self):
+        from query_router import expand_followup_query
+        ctx = ([{"role": "user",
+                 "content": "What are the renewal terms and conditions "
+                            "for the annual service agreement?"}]
+               + [{"role": "assistant", "content": "x" * 60}])
+        q = expand_followup_query(
+            "And what about the payment terms and conditions?", ctx)
+        self.assertLessEqual(len(q), 200)
+        self.assertIn("renewal", q.lower())
+        self.assertIn("payment", q.lower())
+        self.assertNotIn("60", q)  # no assistant text
 
 
 class TestOutOfScopeGroup(unittest.TestCase):

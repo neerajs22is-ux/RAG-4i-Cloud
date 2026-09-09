@@ -141,7 +141,11 @@ class TestPipeline(unittest.TestCase):
             "Are there exceptions to renewal?",
             config=config.load_config(), vector_store=make_store(),
             llm_provider=llm)
-        self.assertTrue(ans.startswith("PARTIAL:"))
+        # PARTIAL now clarifies first (no LLM call), naming both sides.
+        self.assertTrue(ans.startswith("Quick check before I answer:"))
+        self.assertIn("renewal", ans)
+        self.assertIn("exceptions", ans)
+        self.assertEqual(llm.calls, [])
         self.assertTrue(src)
         self.assertEqual(src[0]["file_name"], "contract.pdf")
 
@@ -175,8 +179,9 @@ class TestPipeline(unittest.TestCase):
             "What about exceptions?", config=config.load_config(),
             vector_store=make_store(), llm_provider=llm,
             conversation_context=ctx)
-        # Followup anchors renewal: retrieval hit, partial scoping prompt.
-        self.assertTrue(ans.startswith("PARTIAL:"))
+        # Followup anchors renewal: retrieval hit, then one clarification.
+        self.assertTrue(ans.startswith("Quick check before I answer:"))
+        self.assertEqual(llm.calls, [])
         llm2 = FakeLLM()
         ans2, _ = backend.query_documents(
             "And payment?", config=config.load_config(),
@@ -238,6 +243,108 @@ class TestGrounding(unittest.TestCase):
                 self.assertIn(key, s)
 
 
+class TestClarification(unittest.TestCase):
+    CTX = [{"role": "user", "content": "What are the renewal terms?"},
+           {"role": "assistant",
+            "content": "The service contract renews annually with "
+                       "30 days notice before each renewal date."}]
+
+    def test_clarification_text(self):
+        from answer_support import (CLARIFICATION_MARKER,
+                                    build_clarification)
+        text = build_clarification(
+            "Are there exceptions to renewal?",
+            {"covered": ["renewal"], "missing": ["exceptions"]},
+            [contract_src()])
+        self.assertTrue(text.startswith(CLARIFICATION_MARKER))
+        self.assertIn("renewal", text)
+        self.assertIn("exceptions", text)
+        self.assertIn("contract.pdf", text)
+        # No claims about unseen sections.
+        self.assertNotIn("termination section says", text)
+
+    def test_no_loop_second_partial_answers(self):
+        import backend
+        import config
+        llm = FakeLLM()
+        ans1, _ = backend.query_documents(
+            "Are there exceptions to renewal?",
+            config=config.load_config(), vector_store=make_store(),
+            llm_provider=llm)
+        self.assertTrue(ans1.startswith("Quick check"))
+        ctx = [{"role": "user",
+                "content": "Are there exceptions to renewal?"},
+               {"role": "assistant", "content": ans1}]
+        ans2, src2 = backend.query_documents(
+            "yes", config=config.load_config(), vector_store=make_store(),
+            llm_provider=llm, conversation_context=ctx)
+        self.assertTrue(ans2.startswith("PARTIAL:"))
+        self.assertTrue(src2)
+        # A further "yes" does not clarify again (no loop).
+        ctx2 = ctx + [{"role": "user", "content": "yes"},
+                      {"role": "assistant", "content": ans2}]
+        ans3, _ = backend.query_documents(
+            "yes", config=config.load_config(), vector_store=make_store(),
+            llm_provider=llm, conversation_context=ctx2)
+        self.assertFalse(ans3.startswith("Quick check"))
+
+    def test_yes_without_clarification_is_ordinary(self):
+        import backend
+        import config
+        llm = FakeLLM()
+        ans, _ = backend.query_documents(
+            "yes", config=config.load_config(), vector_store=make_store(),
+            llm_provider=llm)
+        self.assertFalse(ans.startswith("Quick check"))
+
+    def test_memory_object_context_works(self):
+        import backend
+        import config
+        from conversation_memory import ConversationMemory
+        mem = ConversationMemory()
+        mem.add("user", "Are there exceptions to renewal?")
+        llm = FakeLLM()
+        ans, src = backend.query_documents(
+            "Are there exceptions to renewal?",
+            config=config.load_config(), vector_store=make_store(),
+            llm_provider=llm, conversation_context=mem)
+        self.assertTrue(ans.startswith("Quick check"))
+        mem.add("assistant", ans)
+        mem.add("user", "yes")
+        ans2, _ = backend.query_documents(
+            "yes", config=config.load_config(), vector_store=make_store(),
+            llm_provider=llm, conversation_context=mem)
+        self.assertTrue(ans2.startswith("PARTIAL:"))
+
+
+class TestCitationGuard(unittest.TestCase):
+    def test_grounded_passes_clean(self):
+        from answer_support import citation_guard
+        rep = citation_guard(
+            "The contract renews annually with 30 days notice.",
+            [contract_src()])
+        self.assertEqual(rep["count"], 0)
+        self.assertGreater(rep["total"], 0)
+
+    def test_fabricated_clause_flagged(self):
+        from answer_support import citation_guard
+        rep = citation_guard(
+            "The contract renews annually. There is a $500 cancellation "
+            "fee under Section 8.",
+            [contract_src()])
+        self.assertGreater(rep["count"], 0)
+        self.assertTrue(any("cancellation" in s or "Section 8" in s
+                            for s in rep["flagged"]))
+
+    def test_refusal_never_flagged(self):
+        from answer_support import citation_guard
+        for text in ["I could not find enough relevant information.",
+                     "Quick check before I answer: x",
+                     ""]:
+            rep = citation_guard(text, [contract_src()])
+            self.assertEqual(rep["count"], 0)
+
+
 class TestGroundedSuggestions(unittest.TestCase):
     def test_exceptions_gated(self):
         from suggestions import followup_suggestions
@@ -251,6 +358,19 @@ class TestGroundedSuggestions(unittest.TestCase):
     def test_exactly_three(self):
         from suggestions import followup_suggestions
         self.assertEqual(len(followup_suggestions("q", [lease_src()])), 3)
+
+
+class TestQueryForms(unittest.TestCase):
+    def test_plain_query_has_two_forms(self):
+        import backend
+        forms = backend.build_query_forms("What is the lock-in period?")
+        self.assertEqual(len(forms), 2)
+        self.assertIn("lock-in", forms[1])
+
+    def test_original_always_participates(self):
+        import backend
+        forms = backend.build_query_forms("How long is the lock-in?")
+        self.assertTrue(forms[0].lower().startswith("how long"))
 
 
 if __name__ == "__main__":

@@ -147,6 +147,79 @@ def response_label(prompt: str, sources, needs_retrieval: bool):
     return "Grounded answer" if level == DIRECT else "Partial answer"
 
 
+def ask_about_document_question(file_name: str) -> str:
+    """Normal-pipeline question for 'Ask about this document'.
+
+    Contains the real filename so the existing broad-scope/file path
+    handles it; no special retrieval, no extra LLM call.
+    """
+    name = (file_name or "").strip() or "this document"
+    return f"Tell me more about {name}"
+
+
+def document_welcome_summary(sources, limit: int = 6) -> str | None:
+    """Compact 'N documents indexed' + filename list for the welcome state.
+
+    Uses existing list_sources() output only; None when nothing indexed.
+    Filenames are returned raw (callers escape for HTML; Streamlit text
+    rendering escapes automatically).
+    """
+    names = []
+    for s in sources or []:
+        name = (s or {}).get("file_name")
+        if name and name not in names:
+            names.append(name)
+    if not names:
+        return None
+    shown = names[:max(1, limit)]
+    n = len(names)
+    noun = "document" if n == 1 else "documents"
+    line1 = f"{n} {noun} indexed"
+    line2 = " · ".join(shown)
+    if len(names) > len(shown):
+        line2 += f" · +{len(names) - len(shown)} more"
+    return f"{line1}\n{line2}"
+
+
+def localstorage_saver_html(payload_json: str, element_id: str = "rag-restore") -> str:
+    """One-way browser-local snapshot saver (no Python read-back).
+
+    Writes the serialized conversation to localStorage on every render.
+    Bound by explicit element ID; no Streamlit-internal selectors.
+    Restore itself stays explicit + Python-side (paste/choice) so there
+    is no fragile JS→Python bridge and no silent data flow.
+    """
+    import json
+
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", element_id or "rag-restore")
+    # payload_json is already JSON; embed safely as JS string via dumps.
+    blob = json.dumps(payload_json or "{}")
+    return (
+        f"<div id='{safe_id}' style='display:none'></div>"
+        "<script>(function(){"
+        f"var el=document.getElementById('{safe_id}');"
+        "if(!el||el.dataset.done)return;el.dataset.done='1';"
+        f"var raw={blob};"
+        "try{"
+        "if(raw&&raw!=='{}'){localStorage.setItem('rag4i.backup.v1',raw);}"
+        "}catch(e){}"
+        "})();</script>"
+    )
+
+
+def localstorage_clearer_html(element_id: str = "rag-restore-clear") -> str:
+    """One-shot localStorage clearer for New Chat / Start fresh."""
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", element_id or "rag-restore-clear")
+    return (
+        f"<div id='{safe_id}' style='display:none'></div>"
+        "<script>(function(){"
+        f"var el=document.getElementById('{safe_id}');"
+        "if(!el||el.dataset.done)return;el.dataset.done='1';"
+        "try{localStorage.removeItem('rag4i.backup.v1');}catch(e){}"
+        "})();</script>"
+    )
+
+
 def copy_button_html(text: str, key: str) -> str:
     """Vanilla-JS copy button bound by explicit element ID.
 

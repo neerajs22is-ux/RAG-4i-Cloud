@@ -5,9 +5,9 @@ logger = logging.getLogger(__name__)
 
 from backend import (
     check_llm_status,
+    generate_answer,
     get_knowledge_base_status,
     ingest_with_report,
-    query_documents,
 )
 from config import get_config
 from ui.components import (
@@ -301,14 +301,41 @@ def _handle_prompt(prompt_text):
                 status.update(label="Knowledge base not ready", state="error")
                 st.error("⚠️ Knowledge Base is not ready. Please build it in the sidebar first.")
                 return
-            from query_router import observe_query
             from ui.components import response_label
             memory = st.session_state.memory
             memory.add("user", prompt_text)
             history = memory.as_context()
-            needs_retrieval = observe_query(prompt_text, history).needs_retrieval
-            response_text, sources = query_documents(
+
+            # Streaming answer: preparation (routing/retrieval/assessment)
+            # runs once inside stream_answer; chunks render incrementally.
+            from backend import EMPTY_RESPONSE_MESSAGE, stream_answer
+            from output_safety import is_empty_response
+            info, stream = stream_answer(
                 prompt_text, conversation_context=history, on_phase=_phase)
+            needs_retrieval = info["needs_retrieval"]
+            sources = info["retrieved"]
+            if info["answer"] is not None:
+                # Decided without generation (routed/unsupported/fallback).
+                response_text = info["answer"]
+            else:
+                with st.chat_message("assistant"):
+                    placeholder = st.empty()
+                    pieces = []
+                    try:
+                        for piece in stream:
+                            pieces.append(piece)
+                            placeholder.markdown("".join(pieces) + "▍")
+                    except Exception:
+                        # Discard the broken partial render; fall back to
+                        # non-streaming generation with the SAME evidence.
+                        logger.warning("Stream failed mid-answer; falling back.")
+                        pieces = [generate_answer(
+                            prompt_text, sources,
+                            support_level=info["support_level"])]
+                    response_text = "".join(pieces)
+                    placeholder.empty()
+                if is_empty_response(response_text):
+                    response_text = EMPTY_RESPONSE_MESSAGE
 
             # Explicit retrieval status for document questions only;
             # routed replies (chat/out-of-scope) intentionally skip retrieval.
@@ -336,6 +363,9 @@ def _handle_prompt(prompt_text):
             full_response = display_text + source_text
 
             # 3. Record Assistant Message (label/sources/notice ride along).
+            # The live stream above already showed this turn; the trailing
+            # rerun re-renders everything from state (no duplication: each
+            # run renders live output once, then state once).
             _label = response_label(prompt_text, sources, needs_retrieval)
             _push("assistant", full_response, label=_label,
                   sources=sources, notice=notice)

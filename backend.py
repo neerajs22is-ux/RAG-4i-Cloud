@@ -55,6 +55,9 @@ Question:
 LOW_RELEVANCE_MESSAGE = (
     "I could not find enough relevant information in the documents to answer that."
 )
+EMPTY_RESPONSE_MESSAGE = (
+    "The model returned an empty response. Please try again."
+)
 
 # Support levels (see answer_support.py); OVERVIEW shares the scoping prompt.
 PARTIAL_SUPPORT = "partial"
@@ -75,6 +78,7 @@ def ingest_with_report(folder_path, config=None,
 
     details always contains: source (local|s3), found, pages, chars,
     chunks, embeddings, vectors_stored, succeeded, failed, failed_files
+    (list of {file, reason}). Zero/empty outcomes are explicit, never masked.
     (list of {file, reason}). Zero/empty outcomes are explicit, never masked.
     """
     from chunking import CHUNK_OVERLAP, CHUNK_SIZE, chunk_documents
@@ -335,12 +339,8 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
     from output_safety import is_empty_response, strip_think_blocks
 
     cfg = config or get_config()
-    if prompt_template is not None:
-        template = prompt_template
-    elif support_level in (PARTIAL_SUPPORT, OVERVIEW_SUPPORT):
-        template = PARTIAL_PROMPT_TEMPLATE
-    else:
-        template = PROMPT_TEMPLATE
+    template = _select_template(support_level) \
+        if prompt_template is None else prompt_template
     if not retrieved_sources:
         return LOW_RELEVANCE_MESSAGE
     context_text = "\n\n---\n\n".join([s.get("content", "") for s in retrieved_sources])
@@ -356,8 +356,7 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
     answer = strip_think_blocks(raw)
     if is_empty_response(raw):
         logger.info("LLM returned only hidden reasoning or empty text.")
-        return ("The model returned an empty response. "
-                "Please try again.")
+        return EMPTY_RESPONSE_MESSAGE
     return answer
 
 
@@ -383,18 +382,65 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
         return reply_for_route(query_text, obs.intent), []
     cfg = config or get_config()
     _t0 = time.monotonic()
-    retrieval_query = query_text
-    if obs.intent == DOCUMENT_FOLLOWUP:
-        retrieval_query = expand_followup_query(query_text, conversation_context)
+    prepared = _prepare_generation(query_text, cfg, vector_store,
+                                   llm_provider, conversation_context,
+                                   obs, on_phase)
+    if prepared["failed"]:
+        return prepared["answer"], prepared["retrieved"]
+    if prepared["answer"] is not None:
+        # Decided without the LLM (e.g. unsupported evidence).
+        logger.info("query answered in %.2fs (sources=%d, route=%s)",
+                    time.monotonic() - _t0, len(prepared["retrieved"]),
+                    obs.intent)
+        return prepared["answer"], prepared["retrieved"]
+    if on_phase is not None:
+        on_phase("generating")
+    try:
+        answer = generate_answer(
+            query_text, prepared["retrieved"], config=cfg,
+            llm_provider=prepared["provider"],
+            support_level=prepared["support_level"],
+        )
+    except ConnectionError as e:
+        return str(e), prepared["retrieved"]
+    except Exception as e:
+        logger.warning("Query failed: %s", e)
+        return (
+            "An error occurred while generating the answer. "
+            "Make sure LM Studio Server is running.",
+            prepared["retrieved"],
+        )
+    logger.info("query answered in %.2fs (sources=%d, route=%s)",
+                time.monotonic() - _t0, len(prepared["retrieved"]),
+                obs.intent)
+    return answer, prepared["retrieved"]
+
+
+def _prepare_generation(query_text, cfg, vector_store, llm_provider,
+                        conversation_context, obs, on_phase=None):
+    """Shared preparation for streaming and non-streaming generation.
+
+    Runs routing (already done by caller), retrieval (exactly once),
+    support assessment, and prompt selection. Returns a dict with:
+      failed (bool), answer (str|None: set when decided without the LLM),
+      retrieved, support_level, provider.
+    UNSUPPORTED never reaches generation: answer is set, no LLM needed.
+    """
     from answer_support import (DIRECT, PARTIAL, UNSUPPORTED,
                                 assess_support, detect_broad_scope,
                                 unsupported_reply)
     from embeddings import get_embedding_provider
+    from llm_provider import get_llm_provider
+    from query_router import DOCUMENT_FOLLOWUP, expand_followup_query
     from vector_store import get_vector_store
 
     if vector_store is None:
         vector_store = get_vector_store(
             cfg, get_embedding_provider(cfg))
+    provider = llm_provider or get_llm_provider(cfg)
+    retrieval_query = query_text
+    if obs.intent == DOCUMENT_FOLLOWUP:
+        retrieval_query = expand_followup_query(query_text, conversation_context)
     broad, target_file = detect_broad_scope(query_text)
     if on_phase is not None:
         on_phase("retrieving")
@@ -413,37 +459,113 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
                     retrieved.append(struct)
     except Exception as e:
         logger.warning("Retrieval failed: %s", e)
-        return (
+        return {"failed": True, "answer": (
             "The knowledge base is unavailable. Please build the index first "
-            "and check that the vector database is accessible.",
-            [],
-        )
+            "and check that the vector database is accessible."),
+            "retrieved": [], "support_level": None, "provider": provider}
     if not retrieved:
-        return LOW_RELEVANCE_MESSAGE, []
+        return {"failed": False, "answer": LOW_RELEVANCE_MESSAGE,
+                "retrieved": [], "support_level": None, "provider": provider}
     support = assess_support(retrieval_query, retrieved)
     if support["level"] == UNSUPPORTED:
-        return unsupported_reply(query_text), retrieved
+        return {"failed": False, "answer": unsupported_reply(query_text),
+                "retrieved": retrieved, "support_level": None,
+                "provider": provider}
     level = OVERVIEW_SUPPORT if broad else (
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
-    if on_phase is not None:
-        on_phase("generating")
-    try:
-        answer = generate_answer(
-            query_text, retrieved, config=cfg, llm_provider=llm_provider,
-            support_level=level,
-        )
-    except ConnectionError as e:
-        return str(e), retrieved
-    except Exception as e:
-        logger.warning("Query failed: %s", e)
-        return (
-            "An error occurred while generating the answer. "
-            "Make sure LM Studio Server is running.",
-            retrieved,
-        )
-    logger.info("query answered in %.2fs (sources=%d, route=%s)",
-                time.monotonic() - _t0, len(retrieved), obs.intent)
-    return answer, retrieved
+    return {"failed": False, "answer": None, "retrieved": retrieved,
+            "support_level": level, "provider": provider}
+
+
+def stream_answer(query_text, config=None, vector_store=None,
+                  llm_provider=None, conversation_context=None,
+                  on_phase=None):
+    """Streaming answer with synchronous preparation metadata.
+
+    Runs routing/retrieval/assessment exactly once (same evidence and
+    prompts as query_documents()) and returns (info, stream) where info
+    holds retrieved/needs_retrieval/support_level/answer. If info["answer"]
+    is set, the answer was decided without the LLM and stream yields it
+    whole. Otherwise stream yields sanitized generation chunks; the caller
+    assembles the final text and applies the empty-response guard.
+    On generation failure the stream raises so the caller can fall back
+    cleanly (reusing info["retrieved"], never re-retrieving).
+    """
+    from output_safety import ThinkStreamSanitizer
+
+    cfg = config or get_config()
+    from query_router import (CAPABILITY, CONVERSATION, DOCUMENT_FOLLOWUP,
+                              OUT_OF_SCOPE, expand_followup_query,
+                              observe_query, reply_for_route)
+    obs = observe_query(query_text, conversation_context)
+    needs_retrieval = obs.needs_retrieval
+    if obs.intent in (CONVERSATION, CAPABILITY, OUT_OF_SCOPE):
+        answer = reply_for_route(query_text, obs.intent)
+        return ({"answer": answer, "retrieved": [], "needs_retrieval": False,
+                 "support_level": None, "failed": False},
+                _one_shot(answer))
+
+    prepared = _prepare_generation(query_text, cfg, vector_store,
+                                   llm_provider, conversation_context,
+                                   obs, on_phase)
+    info = {"answer": prepared["answer"],
+            "retrieved": prepared["retrieved"],
+            "needs_retrieval": True,
+            "support_level": prepared["support_level"],
+            "failed": prepared["failed"]}
+    if prepared["answer"] is not None or prepared["failed"]:
+        return info, _one_shot(prepared["answer"])
+
+    sanitizer = ThinkStreamSanitizer()
+    provider = prepared["provider"]
+    context_text = "\n\n---\n\n".join(
+        s.get("content", "") for s in prepared["retrieved"])
+    template = _select_template(prepared["support_level"])
+
+    def _gen():
+        try:
+            for raw in provider.generate_stream(context_text, query_text,
+                                                template):
+                safe = sanitizer.feed(raw)
+                if safe:
+                    yield safe
+        except Exception:
+            logger.warning("Streaming generation failed; caller falls back.")
+            raise
+        tail = sanitizer.flush()
+        if tail:
+            yield tail
+
+    return info, _gen()
+
+
+def _one_shot(text):
+    yield text
+
+
+def generate_answer_stream(query_text, config=None, vector_store=None,
+                           llm_provider=None, conversation_context=None,
+                           on_phase=None):
+    """Yield sanitized answer text incrementally (streaming path).
+
+    Preparation (routing/retrieval/assessment) runs exactly once with the
+    same evidence and prompts as query_documents(); only generation chunks
+    are streamed. Yields sanitized text pieces; the caller assembles the
+    final answer and applies the usual empty-response guard. Raises on
+    generation failure so the caller can fall back cleanly.
+    """
+    info, stream = stream_answer(
+        query_text, config=config, vector_store=vector_store,
+        llm_provider=llm_provider, conversation_context=conversation_context,
+        on_phase=on_phase)
+    for piece in stream:
+        yield piece
+
+
+def _select_template(support_level):
+    if support_level in (PARTIAL_SUPPORT, OVERVIEW_SUPPORT):
+        return PARTIAL_PROMPT_TEMPLATE
+    return PROMPT_TEMPLATE
 
 
 def classify_query(query_text) -> str:

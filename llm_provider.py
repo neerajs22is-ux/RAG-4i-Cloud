@@ -11,6 +11,10 @@ class LLMProvider(ABC):
     def generate(self, context: str, question: str, prompt_template: str) -> str:
         raise NotImplementedError
 
+    def generate_stream(self, context: str, question: str, prompt_template: str):
+        """Yield response text incrementally; default falls back to whole."""
+        yield self.generate(context, question, prompt_template)
+
     @abstractmethod
     def is_reachable(self, timeout: float = 3.0) -> bool:
         raise NotImplementedError
@@ -53,6 +57,28 @@ class LMStudioProvider(LLMProvider):
         prompt = ChatPromptTemplate.from_template(prompt_template)
         chain = prompt | model | StrOutputParser()
         return chain.invoke({"context": context, "question": question})
+
+    def generate_stream(self, context: str, question: str, prompt_template: str):
+        """Stream via the same chain/config; fall back to whole on failure."""
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.output_parsers import StrOutputParser
+
+        model = self._chat_model()
+        prompt = ChatPromptTemplate.from_template(prompt_template)
+        chain = prompt | model | StrOutputParser()
+        yielded_any = False
+        try:
+            for token in chain.stream({"context": context, "question": question}):
+                if token:
+                    yielded_any = True
+                    yield token
+        except Exception:
+            if yielded_any:
+                # Partial output already emitted; let the caller decide
+                # (backend discards it and falls back cleanly).
+                raise
+            # Nothing emitted yet: fall back to non-streaming generation.
+            yield self.generate(context, question, prompt_template)
 
     def is_reachable(self, timeout: float = 3.0) -> bool:
         # LM Studio exposes OpenAI-compatible /models; fall back to base URL.

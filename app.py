@@ -35,92 +35,109 @@ st.markdown(load_styles("dark" if st.session_state.theme == "dark" else "auto"),
 # --- SIDEBAR: KNOWLEDGE BASE SETUP (controls unchanged) ---
 is_cloud = (getattr(cfg, "document_storage", "local") or "local").lower() == "s3"
 with st.sidebar:
-    st.header("Knowledge base")
+    # Live checks first so the one-line summary below uses real data.
+    _kb_summary = get_knowledge_base_status()
+    _llm_summary = check_llm_status()
+    _storage_label = (getattr(cfg, "document_storage", "local") or "local")
 
-    def _show_ingest_details(details):
-        st.write(f"Documents found: **{details['found']}**")
-        st.write(f"Pages processed: **{details['pages']}**")
-        st.write(f"Chunks created: **{details['chunks']}**")
-        st.write(f"Embeddings created: **{details['embeddings']}**")
-        st.write(f"Vectors stored: **{details['vectors_stored']}**")
-        st.write(f"Failed files: **{details['failed']}**")
-        for item in details.get("failed_files", []):
-            st.write(f"❌ {item['file']}: {item['reason']}")
+    with st.expander("Knowledge base & status", expanded=False):
+        st.header("Knowledge base")
 
-    def _run_ingest(label, folder):
-        """Run ingestion with live per-document progress (real loop only)."""
-        progress = st.progress(0, text="Starting…")
-        status = st.status("Preparing…", expanded=False)
+        def _show_ingest_details(details):
+            st.write(f"Documents found: **{details['found']}**")
+            st.write(f"Pages processed: **{details['pages']}**")
+            st.write(f"Chunks created: **{details['chunks']}**")
+            st.write(f"Embeddings created: **{details['embeddings']}**")
+            st.write(f"Vectors stored: **{details['vectors_stored']}**")
+            st.write(f"Failed files: **{details['failed']}**")
+            for item in details.get("failed_files", []):
+                st.write(f"❌ {item['file']}: {item['reason']}")
 
-        def _on_progress(current, total, filename, outcome):
-            progress.progress(current / total if total else 0,
-                              text=f"{current} / {total} documents processed")
-            status.update(label=f"Processing {filename}…")
+        def _run_ingest(label, folder):
+            """Run ingestion with live per-document progress (real loop only)."""
+            progress = st.progress(0, text="Starting…")
+            status = st.status("Preparing…", expanded=False)
 
-        try:
-            success, message, details = ingest_with_report(
-                folder, on_progress=_on_progress)
-        finally:
-            progress.empty()
-            status.update(label="Ingestion finished", state="complete")
-        if success:
-            st.success(message)
-        else:
-            st.error(message)
-        _show_ingest_details(details)
+            def _on_progress(current, total, filename, outcome):
+                progress.progress(current / total if total else 0,
+                                  text=f"{current} / {total} documents processed")
+                status.update(label=f"Processing {filename}…")
 
-    if is_cloud:
-        st.write(f"S3 source: `s3://{cfg.s3_bucket}/{cfg.s3_prefix}`")
-        st.caption("Cloud mode: ingestion reads from S3. Local filesystem "
-                   "paths are not available here.")
-        if st.button("Build/Update Database from S3"):
-            _run_ingest("s3", None)
-    else:
-        st.write("Point this to your client's legal folder.")
-
-        # Input for Folder Path (local mode only: path is on the app host).
-        folder_path = st.text_input("Folder Path (local host only):",
-                                    placeholder=r"D:\Clients\ABC_Ltd\Legal")
-        if getattr(cfg, "app_env", "local") != "local":
-            st.caption("Note: this path is on the machine running the app, "
-                       "not your browser computer.")
-
-        if st.button("Build/Update Database"):
-            if folder_path:
-                _run_ingest("local", folder_path)
+            try:
+                success, message, details = ingest_with_report(
+                    folder, on_progress=_on_progress)
+            finally:
+                progress.empty()
+                status.update(label="Ingestion finished", state="complete")
+            if success:
+                st.success(message)
             else:
-                st.warning("Please enter a folder path.")
+                st.error(message)
+            _show_ingest_details(details)
 
-    st.markdown("---")
-    # Real status from actual checks (no hardcoded claims).
-    st.write(f"Environment: **{cfg.app_env.capitalize()}**")
+        if is_cloud:
+            st.write(f"S3 source: `s3://{cfg.s3_bucket}/{cfg.s3_prefix}`")
+            st.caption("Cloud mode: ingestion reads from S3. Local filesystem "
+                       "paths are not available here.")
+            if st.button("Build/Update Database from S3"):
+                _run_ingest("s3", None)
+        else:
+            st.write("Point this to your client's legal folder.")
 
-    kb = get_knowledge_base_status()
-    kb_ready = bool(kb.get("ready"))
+            # Input for Folder Path (local mode only: path is on the app host).
+            folder_path = st.text_input("Folder Path (local host only):",
+                                        placeholder=r"D:\Clients\ABC_Ltd\Legal")
+            if getattr(cfg, "app_env", "local") != "local":
+                st.caption("Note: this path is on the machine running the app, "
+                           "not your browser computer.")
+
+            if st.button("Build/Update Database"):
+                if folder_path:
+                    _run_ingest("local", folder_path)
+                else:
+                    st.warning("Please enter a folder path.")
+
+        st.markdown("---")
+        # Real status from actual checks (no hardcoded claims).
+        st.write(f"Environment: **{cfg.app_env.capitalize()}**")
+
+        kb = _kb_summary
+        kb_ready = bool(kb.get("ready"))
+        if kb_ready:
+            chunks = kb.get("chunk_count")
+            docs = kb.get("document_count")
+            parts = []
+            if docs is not None:
+                parts.append(f"{docs} docs")
+            if chunks is not None:
+                parts.append(f"{chunks} chunks")
+            count_text = f" ({', '.join(parts)})" if parts else ""
+            st.success(f"Knowledge Base: **Ready**{count_text}")
+        elif kb.get("exists"):
+            st.warning("Knowledge Base: **Empty** (no chunks indexed)")
+        else:
+            st.warning("Knowledge Base: **Not built**")
+
+        llm = _llm_summary
+        if llm.get("reachable"):
+            st.success(f"LLM: **Reachable** ({llm.get('model')})")
+        else:
+            st.error(f"LLM: **Unreachable** ({llm.get('base_url')})")
+
+        st.caption(f"Vector store: {cfg.vector_store} @ {cfg.chroma_path}")
+        storage_label = (getattr(cfg, "document_storage", "local") or "local")
+        st.caption(f"Document storage: **{storage_label.capitalize()}**")
+
+    # Persistent one-line summary (outside the expander, always visible).
     if kb_ready:
-        chunks = kb.get("chunk_count")
-        docs = kb.get("document_count")
-        parts = []
-        if docs is not None:
-            parts.append(f"{docs} docs")
-        if chunks is not None:
-            parts.append(f"{chunks} chunks")
-        count_text = f" ({', '.join(parts)})" if parts else ""
-        st.success(f"Knowledge Base: **Ready**{count_text}")
+        _kb_word = "Ready"
     elif kb.get("exists"):
-        st.warning("Knowledge Base: **Empty** (no chunks indexed)")
+        _kb_word = "Empty"
     else:
-        st.warning("Knowledge Base: **Not built**")
-
-    llm = check_llm_status()
-    if llm.get("reachable"):
-        st.success(f"LLM: **Reachable** ({llm.get('model')})")
-    else:
-        st.error(f"LLM: **Unreachable** ({llm.get('base_url')})")
-
-    st.caption(f"Vector store: {cfg.vector_store} @ {cfg.chroma_path}")
-    storage_label = (getattr(cfg, "document_storage", "local") or "local")
-    st.caption(f"Document storage: **{storage_label.capitalize()}**")
+        _kb_word = "Not built"
+    st.caption(f"KB: {_kb_word} · LLM: "
+               f"{'Reachable' if llm.get('reachable') else 'Unreachable'} · "
+               f"{cfg.vector_store} + {storage_label.capitalize()}")
 
     with st.expander("Manage indexed documents"):
         st.caption("Removing a document deletes its indexed vectors. "

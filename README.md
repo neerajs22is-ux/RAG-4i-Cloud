@@ -165,6 +165,11 @@ streamlit run app.py
 4. Use **Copy answer** (per message), **Export chat**, or **New chat**
    from the sidebar. Appearance follows your system setting unless you
    pick Light/Dark in the sidebar.
+5. When evidence only partly covers a question, the assistant asks one
+   clarifying question first (reply “yes” to proceed); answers that go
+   beyond the evidence are marked down to Partial with an
+   “unverified against sources” note. Starter questions are validated
+   to be answerable before they are shown.
 
 ## PostgreSQL/pgvector (Phase 2)
 
@@ -258,9 +263,11 @@ restart-on-failure), `streamlit_config.toml` (port 8501), and
 ## What is NOT implemented (later phases)
 
 Lambda, Bedrock, cloud GPUs, vLLM, Docker, Kubernetes, auth,
-multi-user permissions, OCR, hybrid search, BM25, reranking, query rewriting,
-conversational memory. (RDS PostgreSQL/pgvector second provider and EC2 SSH
-tunnel for local access are covered above in Phase 2; RDS stays private.)
+multi-user permissions, OCR. Hybrid search/BM25, reranking, LLM query
+rewriting, and router coverage hardening are scoped in
+`docs/adr-retrieval-upgrades.md` (deferred deliberately, not forgotten).
+(RDS PostgreSQL/pgvector second provider and EC2 SSH tunnel for local
+access are covered above in Phase 2; RDS stays private.)
 
 ## Tests
 

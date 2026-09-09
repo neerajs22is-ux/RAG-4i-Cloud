@@ -73,13 +73,15 @@ def _looks_like_windows_path(path: str) -> bool:
 
 
 def ingest_with_report(folder_path, config=None,
-                       storage=None, vector_store=None):
+                       storage=None, vector_store=None, on_progress=None):
     """Build/extend the index, returning (success, message, details).
 
     details always contains: source (local|s3), found, pages, chars,
     chunks, embeddings, vectors_stored, succeeded, failed, failed_files
     (list of {file, reason}). Zero/empty outcomes are explicit, never masked.
     (list of {file, reason}). Zero/empty outcomes are explicit, never masked.
+    on_progress(current, total, filename, outcome) mirrors the loader's
+    per-document callback (see document_loader).
     """
     from chunking import CHUNK_OVERLAP, CHUNK_SIZE, chunk_documents
     from document_loader import load_documents_from_folder
@@ -103,7 +105,8 @@ def ingest_with_report(folder_path, config=None,
 
         storage = storage or get_document_storage(cfg)
         try:
-            documents, report = load_documents_from_s3(storage)
+            documents, report = load_documents_from_s3(
+                storage, on_progress=on_progress)
         except Exception as e:
             logger.warning("S3 ingestion failed: %s", e)
             return False, f"Failed to read from S3: {e}", details
@@ -125,7 +128,8 @@ def ingest_with_report(folder_path, config=None,
 
         # 1-2. Locate + load PDFs (per-file errors recorded, not swallowed).
         try:
-            documents, report = load_documents_from_folder(folder_path, storage)
+            documents, report = load_documents_from_folder(
+                folder_path, storage, on_progress=on_progress)
         except Exception as e:
             logger.warning("Ingestion failed: %s", e)
             return False, f"Failed to scan folder: {e}", details

@@ -47,18 +47,34 @@ with st.sidebar:
         for item in details.get("failed_files", []):
             st.write(f"❌ {item['file']}: {item['reason']}")
 
+    def _run_ingest(label, folder):
+        """Run ingestion with live per-document progress (real loop only)."""
+        progress = st.progress(0, text="Starting…")
+        status = st.status("Preparing…", expanded=False)
+
+        def _on_progress(current, total, filename, outcome):
+            progress.progress(current / total if total else 0,
+                              text=f"{current} / {total} documents processed")
+            status.update(label=f"Processing {filename}…")
+
+        try:
+            success, message, details = ingest_with_report(
+                folder, on_progress=_on_progress)
+        finally:
+            progress.empty()
+            status.update(label="Ingestion finished", state="complete")
+        if success:
+            st.success(message)
+        else:
+            st.error(message)
+        _show_ingest_details(details)
+
     if is_cloud:
         st.write(f"S3 source: `s3://{cfg.s3_bucket}/{cfg.s3_prefix}`")
         st.caption("Cloud mode: ingestion reads from S3. Local filesystem "
                    "paths are not available here.")
         if st.button("Build/Update Database from S3"):
-            with st.spinner("Reading from S3 and building index..."):
-                success, message, details = ingest_with_report(None)
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-                _show_ingest_details(details)
+            _run_ingest("s3", None)
     else:
         st.write("Point this to your client's legal folder.")
 
@@ -71,13 +87,7 @@ with st.sidebar:
 
         if st.button("Build/Update Database"):
             if folder_path:
-                with st.spinner("Scanning documents and building index..."):
-                    success, message, details = ingest_with_report(folder_path)
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
-                    _show_ingest_details(details)
+                _run_ingest("local", folder_path)
             else:
                 st.warning("Please enter a folder path.")
 

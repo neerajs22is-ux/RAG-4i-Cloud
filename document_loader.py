@@ -54,12 +54,14 @@ def load_pdf_file(pdf_path: str):
     return docs
 
 
-def load_documents_from_folder(folder_path: str, storage=None):
+def load_documents_from_folder(folder_path: str, storage=None, on_progress=None):
     """Load all PDFs under folder_path.
 
     Returns (documents, report) where report has:
         found, succeeded, failed, failed_files
     A single PDF failure never aborts the whole run.
+    on_progress(current, total, filename, outcome) fires after each file
+    reaches a final outcome ("ok"/"failed"), in processing order.
     """
     from document_storage import LocalDocumentStorage
 
@@ -77,7 +79,8 @@ def load_documents_from_folder(folder_path: str, storage=None):
         "failed_errors": {},
     }
     documents: List = []
-    for pdf_file in pdf_files:
+    total = len(pdf_files)
+    for current, pdf_file in enumerate(pdf_files, 1):
         try:
             docs = load_pdf_file(pdf_file)
             documents.extend(docs)
@@ -85,11 +88,15 @@ def load_documents_from_folder(folder_path: str, storage=None):
             report["pages"] += len(docs)
             report["chars"] += sum(len(getattr(d, "page_content", "") or "")
                                    for d in docs)
+            if on_progress is not None:
+                on_progress(current, total, os.path.basename(pdf_file), "ok")
         except Exception as e:
             report["failed"] += 1
             report["failed_files"].append(os.path.basename(pdf_file))
             report["failed_errors"][os.path.basename(pdf_file)] = str(e)
             logger.warning("Error loading %s: %s", pdf_file, e)
+            if on_progress is not None:
+                on_progress(current, total, os.path.basename(pdf_file), "failed")
             continue
     return documents, report
 
@@ -99,13 +106,14 @@ def _s3_source_id(bucket: str, key: str) -> str:
     return f"s3://{bucket}/{key}"
 
 
-def load_documents_from_s3(storage, tmp_dir=None):
+def load_documents_from_s3(storage, tmp_dir=None, on_progress=None):
     """Load all PDFs from an S3DocumentStorage via temp downloads.
 
     Downloads each object, loads with the existing PyPDFLoader path, then
     rewrites metadata to the stable S3 identifier (page preserved as-is).
     Returns (documents, report) with the same shape as folder loading.
     Temp files are removed best-effort afterwards.
+    on_progress(current, total, filename, outcome) mirrors folder loading.
     """
     import hashlib
     import shutil
@@ -123,8 +131,10 @@ def load_documents_from_s3(storage, tmp_dir=None):
     }
     documents: List = []
     workdir = tmp_dir or tempfile.mkdtemp(prefix="s3ingest_")
+    total = len(keys)
     try:
-        for key in keys:
+        for current, key in enumerate(keys, 1):
+            file_name = key.replace("\\", "/").split("/")[-1]
             try:
                 data = storage.get_document(key)
                 file_name = key.replace("\\", "/").split("/")[-1]
@@ -148,6 +158,8 @@ def load_documents_from_s3(storage, tmp_dir=None):
                 report["pages"] += len(docs)
                 report["chars"] += sum(len(getattr(d, "page_content", "") or "")
                                        for d in docs)
+                if on_progress is not None:
+                    on_progress(current, total, file_name, "ok")
             except Exception as e:
                 report["failed"] += 1
                 report["failed_files"].append(
@@ -155,6 +167,10 @@ def load_documents_from_s3(storage, tmp_dir=None):
                 report["failed_errors"][
                     key.replace("\\", "/").split("/")[-1]] = str(e)
                 logger.warning("Error loading %s: %s", key, e)
+                if on_progress is not None:
+                    on_progress(current, total,
+                                key.replace("\\", "/").split("/")[-1],
+                                "failed")
                 continue
     finally:
         if tmp_dir is None:

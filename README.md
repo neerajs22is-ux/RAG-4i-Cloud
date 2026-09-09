@@ -138,6 +138,7 @@ streamlit run app.py
 2. Enter a local folder path (e.g. `D:\Clients\ABC_Ltd\Legal`).
 3. Click **Build/Update Database**.
 4. The message reports `found/succeeded/failed` + failed filenames.
+   A live `N / M documents processed` bar tracks the real ingestion loop.
    Re-indexing is idempotent: same content produces the same chunk IDs,
    so rebuilding does not create duplicates. Use **Manage indexed
    documents** in the sidebar to remove a document's vectors (source
@@ -153,10 +154,17 @@ streamlit run app.py
 ## How to query
 
 1. Wait for `Knowledge Base: Ready` + `LLM: Reachable` in the sidebar.
+   The composer stays disabled (with an explanation) until both are ready.
 2. Ask in the chat box (e.g. “What is the lock-in period in the lease deed?”).
+   Answers stream in as they are generated.
 3. Answers are grounded in retrieved chunks; sources show
-   `filename (p. N) [score]`. Low-relevance queries return the
+   `filename (p. N) [score]` with an expandable chunk excerpt, plus a
+   `Retrieval strength · X.XX` similarity note (not a probability).
+   Low-relevance queries return the
    “could not find enough relevant information” fallback.
+4. Use **Copy answer** (per message), **Export chat**, or **New chat**
+   from the sidebar. Appearance follows your system setting unless you
+   pick Light/Dark in the sidebar.
 
 ## PostgreSQL/pgvector (Phase 2)
 

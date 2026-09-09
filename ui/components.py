@@ -66,6 +66,17 @@ def format_source_rows(sources):
     return rows
 
 
+def excerpt_text(content: str, limit: int = 500) -> str:
+    """Compact excerpt: word-boundary trim with ellipsis when cut."""
+    text = re.sub(r"\s+", " ", content or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(" ", 0, limit)
+    if cut < limit // 2:
+        cut = limit
+    return text[:cut].rstrip() + "…"
+
+
 def source_row_html(row) -> str:
     """One escaped source row (filename/page/score + chunk preview)."""
     name = escape(row["file_name"]) if row["file_name"] else "unknown"
@@ -75,7 +86,7 @@ def source_row_html(row) -> str:
            f"{row['score_text']}</span></div>")
     if row.get("content"):
         out += (f'<div class="rag-source-chunk">'
-                f'{escape(row["content"][:500])}</div>')
+                f'{escape(excerpt_text(row["content"]))}</div>')
     return out
 
 
@@ -93,6 +104,19 @@ def friendly_error(backend_message: str) -> str:
 def suggestion_button_label(text: str, limit: int = 80) -> str:
     """Full suggestion text (Streamlit wraps); shortened only for keys."""
     return text or ""
+
+
+def retrieval_strength(sources) -> str | None:
+    """Compact retrieval-strength label from the top relevance score.
+
+    Terminology is deliberate: a similarity score, not a probability of
+    correctness. Returns None when no scored source exists.
+    """
+    scores = [s.get("score") for s in (sources or [])
+              if isinstance(s.get("score"), (int, float))]
+    if not scores:
+        return None
+    return f"Retrieval strength · {max(scores):.2f}"
 
 
 def export_chat_markdown(messages) -> str:

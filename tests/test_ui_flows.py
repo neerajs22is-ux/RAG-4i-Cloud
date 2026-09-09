@@ -110,6 +110,28 @@ class UIFlowCase(unittest.TestCase):
         self.assertFalse(at.exception, at.exception)
         self.assertTrue(any(m.type == "chat_message" for m in at.main))
 
+    def test_disabled_composer_explains_why(self):
+        import config
+        from streamlit.testing.v1 import AppTest
+        old = os.environ.get("CHROMA_PATH")
+        os.environ["CHROMA_PATH"] = os.path.join(self.tmp, "no-such-db")
+        config.reset_config_cache()
+        try:
+            with mock.patch("model_warmup.warmup",
+                            return_value={"state": "ready"}):
+                at = AppTest.from_file(APP, default_timeout=180)
+                at.run()
+        finally:
+            if old is None:
+                os.environ.pop("CHROMA_PATH", None)
+            else:
+                os.environ["CHROMA_PATH"] = old
+            config.reset_config_cache()
+        self.assertFalse(at.exception, at.exception)
+        self.assertTrue(at.chat_input[0].disabled)
+        captions = "\n".join(c.value for c in at.caption)
+        self.assertIn("disabled until", captions)
+
 
 if __name__ == "__main__":
     unittest.main()

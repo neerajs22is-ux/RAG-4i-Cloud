@@ -238,6 +238,8 @@ for message in st.session_state.messages:
                 f"the no-context fallback, not a grounded answer."
             )
         st.markdown(message["content"])
+        if message.get("strength"):
+            st.caption(message["strength"])
         if message.get("sources"):
             import streamlit.components.v1 as _components
 
@@ -287,11 +289,13 @@ def _handle_prompt(prompt_text):
     if "msg_seq" not in st.session_state:
         st.session_state.msg_seq = 0
 
-    def _push(role, content, label=None, sources=None, notice=None):
+    def _push(role, content, label=None, sources=None, notice=None,
+              strength=None):
         st.session_state.msg_seq += 1
         st.session_state.messages.append({
             "role": role, "content": content, "seq": st.session_state.msg_seq,
             "label": label, "sources": sources or [], "notice": notice,
+            "strength": strength,
         })
 
     # 1. Record User Message
@@ -377,8 +381,10 @@ def _handle_prompt(prompt_text):
             # rerun re-renders everything from state (no duplication: each
             # run renders live output once, then state once).
             _label = response_label(prompt_text, sources, needs_retrieval)
+            from ui.components import retrieval_strength
             _push("assistant", full_response, label=_label,
-                  sources=sources, notice=notice)
+                  sources=sources, notice=notice,
+                  strength=retrieval_strength(sources))
             st.session_state.memory.add("assistant", full_response)
             st.session_state.pop("last_failed", None)
 

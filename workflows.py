@@ -630,6 +630,84 @@ def _run_comparison(query_text, detected, config, vector_store,
                                      "below.\n\n" if partial else ""))
 
 
+def _run_extraction(query_text, detected, config, vector_store,
+                    known_files, t0, on_phase, stream=False):
+    from backend import LOW_RELEVANCE_MESSAGE
+
+    cfg = config
+    if cfg is None:
+        from config import get_config
+        cfg = get_config()
+    vs = _resolve_store(cfg, vector_store)
+    if on_phase is not None:
+        on_phase("retrieving")
+    fields = detected.get("fields") or []
+    mentioned = [m for m in (detected.get("mentioned") or [])
+                 if _match_known(m, known_files)] if known_files else []
+    scoped = mentioned[:1]
+    subqueries = [query_text]
+    for field in fields[:MAX_EXTRACTION_SUBQUERIES - 1]:
+        q = field + (" " + scoped[0] if scoped else "")
+        if q not in subqueries:
+            subqueries.append(q)
+    best, retrieval_ms = {}, 0
+    for q in subqueries[:MAX_EXTRACTION_SUBQUERIES]:
+        hits, ms = retrieve_for_document(q, scoped[0], config=cfg,
+                                         vector_store=vs) if scoped else \
+            _retrieve_all(q, cfg, vs)
+        retrieval_ms += ms
+        for s in hits:
+            cid = s.get("chunk_id") or id(s)
+            if cid not in best:
+                best[cid] = s
+    evidence = list(best.values())
+    if not evidence:
+        timings = {"retrieval_ms": retrieval_ms, "support_ms": 0,
+                   "preparation_ms": _ms(t0, time.monotonic()),
+                   "generation_ms": 0}
+        info = {"answer": LOW_RELEVANCE_MESSAGE, "retrieved": [],
+                "needs_retrieval": True, "support_level": None,
+                "failed": False, "timings": timings,
+                "workflow": EXTRACTION, "label": "Not enough context",
+                "fallback_template": None, "fallback_question": query_text}
+        return _wrap(info, stream)
+    rows, missing = harvest_extraction_rows(evidence, fields)
+    if not rows:
+        timings = {"retrieval_ms": retrieval_ms, "support_ms": 0,
+                   "preparation_ms": _ms(t0, time.monotonic()),
+                   "generation_ms": 0}
+        info = {"answer": LOW_RELEVANCE_MESSAGE, "retrieved": evidence,
+                "needs_retrieval": True, "support_level": None,
+                "failed": False, "timings": timings,
+                "workflow": EXTRACTION, "label": "Not enough context",
+                "fallback_template": None, "fallback_question": query_text}
+        return _wrap(info, stream)
+    table = build_extraction_table(rows, missing)
+    label = EXTRACTION_LABEL if not missing else "Partial answer"
+    timings = {"retrieval_ms": retrieval_ms, "support_ms": 0,
+               "preparation_ms": _ms(t0, time.monotonic()),
+               "generation_ms": 0}
+    info = {"answer": table, "retrieved": evidence,
+            "needs_retrieval": True, "support_level": None,
+            "failed": False, "timings": timings,
+            "workflow": EXTRACTION, "label": label,
+            "fallback_template": None, "fallback_question": query_text}
+    return _wrap(info, stream)
+
+
+def _retrieve_all(query_text, cfg, vs):
+    """Unscoped retrieval with timing (extraction base query)."""
+    from backend import retrieve_documents
+
+    _t0 = time.monotonic()
+    try:
+        hits = retrieve_documents(query_text, config=cfg, vector_store=vs)
+    except Exception as e:
+        logger.warning("Retrieval failed: %s", e)
+        return [], _ms(_t0, time.monotonic())
+    return hits, _ms(_t0, time.monotonic())
+
+
 def _one_shot(text):
     yield text
 

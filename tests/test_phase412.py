@@ -245,6 +245,67 @@ class TestComparisonRun(unittest.TestCase):
         self.assertEqual(info["label"], _info["label"])
 
 
+class TestExtraction(unittest.TestCase):
+    def test_notice_periods_table(self):
+        from workflows import EXTRACTION_LABEL, query_workflow
+        ans, sources, info = query_workflow(
+            "Extract all notice periods.", config=_cfg(),
+            vector_store=FakeStore(), llm_provider=FakeLLM())
+        self.assertEqual(info["label"], EXTRACTION_LABEL)
+        self.assertIn("|", ans)  # markdown table
+        self.assertIn("notice", ans.lower())
+        self.assertTrue(sources)
+
+    def test_values_grounded(self):
+        from workflows import query_workflow
+        ans, sources, _info = query_workflow(
+            "List all payment deadlines.", config=_cfg(),
+            vector_store=FakeStore(), llm_provider=FakeLLM())
+        evidence = " ".join(s.get("content", "") for s in sources).lower()
+        for line in ans.splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 3 or cells[0] in ("#", "---") \
+                    or cells[2].startswith("---"):
+                continue
+            self.assertIn(cells[2].lower()[:40], evidence)
+
+    def test_missing_values_marked(self):
+        from workflows import harvest_extraction_rows
+        rows, missing = harvest_extraction_rows(
+            [_struct("The deposit amount is Rs 50000.", "a.pdf", 0, 0.9, "c1")],
+            ["amounts", "notice periods"])
+        self.assertTrue(rows)
+        self.assertIn("notice periods", missing)
+
+    def test_duplicates_removed(self):
+        from workflows import harvest_extraction_rows
+        dup = _struct("Payment of Rs 50000 is due monthly.", "a.pdf", 0,
+                      0.9, "c1")
+        rows, _missing = harvest_extraction_rows([dup, dict(dup)],
+                                                 ["payment terms"])
+        self.assertEqual(len(rows), 1)
+
+    def test_no_llm_for_extraction(self):
+        from workflows import query_workflow
+        llm = FakeLLM()
+        query_workflow("List all payment deadlines.", config=_cfg(),
+                       vector_store=FakeStore(), llm_provider=llm)
+        self.assertEqual(llm.calls, [])
+
+    def test_normal_routing_unchanged(self):
+        from unittest import mock
+        import backend
+        import workflows
+        with mock.patch.object(backend, "stream_answer") as m:
+            m.return_value = ({"answer": "x", "retrieved": [],
+                               "needs_retrieval": False, "support_level": None,
+                               "failed": False, "timings": {}}, iter(["x"]))
+            workflows.stream_workflow_answer("What is the lock-in period?")
+            self.assertTrue(m.called)
+
+
 
 
 if __name__ == "__main__":

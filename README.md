@@ -54,7 +54,8 @@ Why each module exists:
 - `chunking.py` — single place for 1000/200 splitter + `chunk_id`.
 - `embeddings.py` — wraps `HuggingFaceEmbeddings` so app code never imports it.
 - `vector_store.py` — `build_index/search/get_status` interface + dispatch;
-  Chroma implementation append-only (no `shutil.rmtree`).
+  Chroma implementation upserts by content hash (no `shutil.rmtree`,
+  re-indexing is idempotent).
 - `postgres_vector_store.py` — pgvector implementation of the same interface
   (`chunks` table, `embedding vector(384)`, additive `ON CONFLICT DO NOTHING`).
 - `migrate_to_postgres.py` — copy/additive migration
@@ -137,7 +138,17 @@ streamlit run app.py
 2. Enter a local folder path (e.g. `D:\Clients\ABC_Ltd\Legal`).
 3. Click **Build/Update Database**.
 4. The message reports `found/succeeded/failed` + failed filenames.
-   Existing index data is **kept** (re-indexing appends; duplicates possible in P1).
+   Re-indexing is idempotent: same content produces the same chunk IDs,
+   so rebuilding does not create duplicates. Use **Manage indexed
+   documents** in the sidebar to remove a document's vectors (source
+   files are left untouched).
+
+## Managing documents
+
+- The sidebar lists indexed source files with per-file **Remove** actions.
+- Removing deletes that document's vectors from the active vector store
+  only; the original PDF (local folder or S3) is never deleted.
+- Switch appearance between Auto/Light/Dark from the sidebar at any time.
 
 ## How to query
 

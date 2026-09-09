@@ -393,16 +393,26 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     prepared = _prepare_generation(query_text, cfg, vector_store,
                                    llm_provider, conversation_context,
                                    obs, on_phase)
+    _prep_timings = prepared.get("timings", {})
     if prepared["failed"]:
+        logger.info("query answered in %.2fs (sources=%d, route=%s "
+                    "retrieval_ms=%s support_ms=%s)",
+                    time.monotonic() - _t0, len(prepared["retrieved"]),
+                    obs.intent, _prep_timings.get("retrieval_ms"),
+                    _prep_timings.get("support_ms"))
         return prepared["answer"], prepared["retrieved"]
     if prepared["answer"] is not None:
         # Decided without the LLM (e.g. unsupported evidence).
-        logger.info("query answered in %.2fs (sources=%d, route=%s)",
+        _total_ms = max(0, int((time.monotonic() - _t0) * 1000))
+        logger.info("query answered in %.2fs (sources=%d, route=%s "
+                    "retrieval_ms=%s support_ms=%s generation_ms=0 total_ms=%d)",
                     time.monotonic() - _t0, len(prepared["retrieved"]),
-                    obs.intent)
+                    obs.intent, _prep_timings.get("retrieval_ms"),
+                    _prep_timings.get("support_ms"), _total_ms)
         return prepared["answer"], prepared["retrieved"]
     if on_phase is not None:
         on_phase("generating")
+    _g0 = time.monotonic()
     try:
         answer = generate_answer(
             prepared.get("effective", query_text), prepared["retrieved"],
@@ -418,9 +428,13 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
             "Make sure LM Studio Server is running.",
             prepared["retrieved"],
         )
-    logger.info("query answered in %.2fs (sources=%d, route=%s)",
+    _generation_ms = max(0, int((time.monotonic() - _g0) * 1000))
+    _total_ms = max(0, int((time.monotonic() - _t0) * 1000))
+    logger.info("query answered in %.2fs (sources=%d, route=%s "
+                "retrieval_ms=%s support_ms=%s generation_ms=%d total_ms=%d)",
                 time.monotonic() - _t0, len(prepared["retrieved"]),
-                obs.intent)
+                obs.intent, _prep_timings.get("retrieval_ms"),
+                _prep_timings.get("support_ms"), _generation_ms, _total_ms)
     return answer, prepared["retrieved"]
 
 
@@ -435,6 +449,10 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     UNSUPPORTED never reaches generation: answer is set, no LLM needed.
     PARTIAL with missing terms yields one deterministic clarification
     (never a loop: confirmations resolve to the original question first).
+
+    Timings (real monotonic-clock measurements, no behaviour change):
+      timings = {"retrieval_ms": int, "support_ms": int,
+                 "preparation_ms": int} on every return path.
     """
     from answer_support import (DIRECT, PARTIAL, UNSUPPORTED,
                                 assess_support, build_clarification,
@@ -446,6 +464,13 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     from query_router import DOCUMENT_FOLLOWUP, expand_followup_query
     from vector_store import get_vector_store
 
+    def _ms(a, b):
+        try:
+            return max(0, int((float(b) - float(a)) * 1000))
+        except (TypeError, ValueError):
+            return 0
+
+    _prep_t0 = time.monotonic()
     if vector_store is None:
         vector_store = get_vector_store(
             cfg, get_embedding_provider(cfg))
@@ -460,6 +485,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     broad, target_file = detect_broad_scope(effective)
     if on_phase is not None:
         on_phase("retrieving")
+    _r0 = time.monotonic()
     try:
         retrieved = retrieve_documents(
             retrieval_query, config=cfg, vector_store=vector_store
@@ -485,32 +511,51 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
                         target_file, similar, len(retrieved))
     except Exception as e:
         logger.warning("Retrieval failed: %s", e)
+        _retrieval_ms = _ms(_r0, time.monotonic())
         return {"failed": True, "answer": (
             "The knowledge base is unavailable. Please build the index first "
             "and check that the vector database is accessible."),
             "retrieved": [], "support_level": None, "provider": provider,
-            "effective": effective}
+            "effective": effective,
+            "timings": {"retrieval_ms": _retrieval_ms, "support_ms": 0,
+                        "preparation_ms": _ms(_prep_t0, time.monotonic())}}
+    _retrieval_ms = _ms(_r0, time.monotonic())
+    _s0 = time.monotonic()
     if not retrieved:
         return {"failed": False, "answer": LOW_RELEVANCE_MESSAGE,
                 "retrieved": [], "support_level": None, "provider": provider,
-                "effective": effective}
+                "effective": effective,
+                "timings": {"retrieval_ms": _retrieval_ms, "support_ms": 0,
+                            "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     support = assess_support(retrieval_query, retrieved)
     if support["level"] == UNSUPPORTED:
+        _support_ms = _ms(_s0, time.monotonic())
         return {"failed": False, "answer": unsupported_reply(effective),
                 "retrieved": retrieved, "support_level": None,
-                "provider": provider, "effective": effective}
+                "provider": provider, "effective": effective,
+                "timings": {"retrieval_ms": _retrieval_ms,
+                            "support_ms": _support_ms,
+                            "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     if (support["level"] == PARTIAL and support.get("missing")
             and not already_clarified):
+        _support_ms = _ms(_s0, time.monotonic())
         return {"failed": False,
                 "answer": build_clarification(
                     effective, support, retrieved),
                 "retrieved": retrieved, "support_level": None,
-                "provider": provider, "effective": effective}
+                "provider": provider, "effective": effective,
+                "timings": {"retrieval_ms": _retrieval_ms,
+                            "support_ms": _support_ms,
+                            "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     level = OVERVIEW_SUPPORT if broad else (
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
+    _support_ms = _ms(_s0, time.monotonic())
     return {"failed": False, "answer": None, "retrieved": retrieved,
             "support_level": level, "provider": provider,
-            "effective": effective}
+            "effective": effective,
+            "timings": {"retrieval_ms": _retrieval_ms,
+                        "support_ms": _support_ms,
+                        "preparation_ms": _ms(_prep_t0, time.monotonic())}}
 
 
 def preview_answer(query_text, config=None, vector_store=None,
@@ -565,7 +610,9 @@ def stream_answer(query_text, config=None, vector_store=None,
     if obs.intent in (CONVERSATION, CAPABILITY, OUT_OF_SCOPE):
         answer = reply_for_route(query_text, obs.intent)
         return ({"answer": answer, "retrieved": [], "needs_retrieval": False,
-                 "support_level": None, "failed": False},
+                 "support_level": None, "failed": False,
+                 "timings": {"retrieval_ms": 0, "support_ms": 0,
+                             "preparation_ms": 0, "generation_ms": None}},
                 _one_shot(answer))
 
     prepared = _prepare_generation(query_text, cfg, vector_store,
@@ -575,7 +622,11 @@ def stream_answer(query_text, config=None, vector_store=None,
             "retrieved": prepared["retrieved"],
             "needs_retrieval": True,
             "support_level": prepared["support_level"],
-            "failed": prepared["failed"]}
+            "failed": prepared["failed"],
+            "timings": dict(prepared.get("timings", {}))}
+    # Generation timing is measured by the caller (stream consumption);
+    # placeholder keeps the shape stable for telemetry.
+    info["timings"].setdefault("generation_ms", None)
     if prepared["answer"] is not None or prepared["failed"]:
         return info, _one_shot(prepared["answer"])
 

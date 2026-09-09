@@ -568,11 +568,13 @@ def _handle_prompt(prompt_text):
             memory.add("user", prompt_text)
             history = memory.as_context()
 
-            # Streaming answer: preparation (routing/retrieval/assessment)
-            # runs once inside stream_answer; chunks render incrementally.
-            from backend import EMPTY_RESPONSE_MESSAGE, stream_answer
+            # Streaming workflow entry: normal questions take the frozen
+            # path unchanged; comparison/extraction/summary use the
+            # additive workflows layer (same evidence/sanitizer rules).
+            from backend import EMPTY_RESPONSE_MESSAGE
+            from workflows import stream_workflow_answer
             from output_safety import is_empty_response
-            info, stream = stream_answer(
+            info, stream = stream_workflow_answer(
                 prompt_text, conversation_context=history, on_phase=_phase)
             _prep.update(ok=True, info=info, stream=stream,
                          needs_retrieval=info["needs_retrieval"],
@@ -608,11 +610,16 @@ def _handle_prompt(prompt_text):
                         placeholder.markdown("".join(pieces) + "▍")
                 except Exception:
                     # Discard the broken partial render; fall back to
-                    # non-streaming generation with the SAME evidence.
+                    # non-streaming generation with the SAME evidence
+                    # (and the workflow's own template where applicable).
                     logger.warning("Stream failed mid-answer; falling back.")
-                    pieces = [generate_answer(
-                        prompt_text, sources,
-                        support_level=info["support_level"])]
+                    _fb_template = info.get("fallback_template")
+                    _fb_prefix = info.get("fallback_prefix", "") or ""
+                    pieces = [_fb_prefix + generate_answer(
+                        info.get("fallback_question", prompt_text), sources,
+                        prompt_template=_fb_template,
+                        support_level=None if _fb_template
+                        else info["support_level"])]
                 response_text = "".join(pieces)
                 placeholder.empty()
             _generation_ms = max(0, int((time.monotonic() - _t_gen0) * 1000))
@@ -648,7 +655,10 @@ def _handle_prompt(prompt_text):
     # The live stream above already showed this turn; the trailing
     # rerun re-renders everything from state (no duplication: each
     # run renders live output once, then state once).
-        _label = response_label(prompt_text, sources, needs_retrieval)
+        # Workflow answers carry their own label; normal questions use the
+        # existing support-derived label (unchanged behaviour).
+        _label = info.get("label") or response_label(
+            prompt_text, sources, needs_retrieval)
         from answer_support import citation_guard
         from ui.components import retrieval_strength
         _guard = citation_guard(display_text, sources) \

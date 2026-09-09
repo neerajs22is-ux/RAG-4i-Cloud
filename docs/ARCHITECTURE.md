@@ -3,8 +3,9 @@
 ## Control flow (question)
 ```text
 browser → Streamlit (app.py)
-  → observe_query(message, ConversationMemory)   [query_router.py]
-  → route: conversation/capability/out-of-scope → canned reply (no retrieval)
+  → stream_workflow_answer(message, ConversationMemory)   [workflows.py]
+  → structural detection (no LLM): comparison | extraction | summary
+  → normal → existing path below, byte-for-byte unchanged
   → DOCUMENT_QUERY/FOLLOWUP
       → expand_followup_query (follow-ups only)  [query_router.py]
       → build_query_forms → per-form search, max-pool, top-k, threshold 0.3
@@ -15,6 +16,22 @@ browser → Streamlit (app.py)
       → think-strip guard → citation guard (label downgrade + marker)
       → persist message {label, sources, strength, guard_note} to session_state
 ```
+
+## Advanced workflows (`workflows.py`, additive layer)
+- Detection first: summary verb + 1 file → summary; comparison cues +
+  resolvable targets → comparison; list verb + legal fields → extraction;
+  else normal (existing `stream_answer`, untouched).
+- Comparison: per-document `retrieve_documents` filtered to the file +
+  `chunks_for_source` top-up (k=5, threshold 0.3 each); new
+  `COMPARISON_PROMPT_TEMPLATE`; partial when a side lacks
+  query-matched evidence (label `Partial comparison`).
+- Extraction: deterministic field decomposition (≤4 sub-queries),
+  verbatim sentence harvest → markdown table; no LLM call.
+- Summary: bounded `chunks_for_source` selection (≤24 chunks, staged
+  part-summaries above 6); new `SUMMARY_*_PROMPT_TEMPLATE`s.
+- All workflow answers persist the same message shape
+  {label, sources, strength, timings} so latency, feedback, telemetry,
+  follow-ups, restore, and New Chat keep working unchanged.
 
 ## Control flow (ingestion)
 ```text

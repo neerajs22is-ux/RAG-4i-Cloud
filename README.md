@@ -183,6 +183,31 @@ streamlit run app.py
    feedback, and restore state only — documents, vectors, and config
    are untouched.
 
+## Advanced legal workflows (Phase 4.12)
+
+Same chat box, same grounding contract (retrieval k=5, threshold 0.3,
+temperature 0.0). Ordinary questions use the unchanged Q&A path.
+
+- **Compare documents**: “Compare the lock-in clauses in contract.pdf
+  and lease.pdf.” Per-document evidence, a topic table plus a
+  similarities/differences/missing conclusion. Ambiguous targets get a
+  clarification listing real indexed files (nothing invented); if one
+  side has no matching evidence the answer is marked
+  **Partial comparison** and says so.
+- **Structured extraction**: “List all payment deadlines.” Returns a
+  table of verbatim evidence values with document + page. Missing
+  values read “Not stated in the retrieved material”. No LLM call.
+- **Document summaries**: “Summarize lease.pdf.” Bounded,
+  document-scoped evidence (max 24 chunks, staged for longer files);
+  topical questions such as “What does lease.pdf say about renewal?”
+  stay on normal Q&A.
+- **Open source**: each source preview has **Open source** to read the
+  full cited page text (from already-retrieved evidence; works for
+  local and S3 alike) plus sibling cited pages. PDF page-image
+  rendering is not available in this pilot (no renderer on the
+  `t3.micro` box, no public URLs); the viewer is text from retrieved
+  chunks, never raw filesystem paths.
+
 ## PostgreSQL/pgvector (Phase 2)
 
 RDS stays **private** (no public access). Local development connects via SSH

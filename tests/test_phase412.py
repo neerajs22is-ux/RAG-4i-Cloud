@@ -411,6 +411,186 @@ class TestNavigation(unittest.TestCase):
         self.assertIn("terms", html)
 
 
+class TestInvariants412(unittest.TestCase):
+    def test_core_untouched(self):
+        import backend
+        import config
+        cfg = config.load_config()
+        self.assertEqual(cfg.llm_temperature, 0.0)
+        self.assertEqual(cfg.retrieval_k, 5)
+        self.assertEqual(cfg.relevance_threshold, 0.3)
+        self.assertEqual(cfg.chunk_size, 1000)
+        self.assertEqual(cfg.chunk_overlap, 200)
+        self.assertEqual(cfg.embedding_model, "all-MiniLM-L6-v2")
+        self.assertIn("You are an expert legal assistant", backend.PROMPT_TEMPLATE)
+
+    def test_retrieval_params_preserved(self):
+        import inspect
+        import backend
+        sig = inspect.signature(backend.retrieve_documents)
+        self.assertIn("threshold", sig.parameters)
+        self.assertIn("k", sig.parameters)
+
+    def test_provider_abstraction_intact(self):
+        import backend
+        import inspect
+        src = inspect.getsource(backend.retrieve_documents)
+        self.assertIn("vector_store.search", src)
+        import workflows
+        wsrc = inspect.getsource(workflows.retrieve_for_document)
+        self.assertIn("chunks_for_source", wsrc)
+        self.assertNotIn("Chroma", wsrc)
+        self.assertNotIn("psycopg", wsrc)
+
+
+class TestWorkflowsAppTest(unittest.TestCase):
+    """Focused AppTest: workflow rendering + viewer + normal regression."""
+
+    APP = os.path.join(os.path.dirname(__file__), "..", "app.py")
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls.tmp = tempfile.mkdtemp(prefix="p412_")
+        pdfd = os.path.join(cls.tmp, "pdfs")
+        os.makedirs(pdfd)
+
+        def _pdf_bytes(text):
+            esc = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            s = "BT /F1 12 Tf 72 720 Td (" + esc + ") Tj ET"
+            objs = [(1, "<< /Type /Catalog /Pages 2 0 R >>"),
+                    (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+                    (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                        "/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"),
+                    (4, "<< /Length " + str(len(s)) + " >>\nstream\n" + s + "\nendstream"),
+                    (5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")]
+            out = bytearray(b"%PDF-1.4\n")
+            offs = {}
+            for num, body in objs:
+                offs[num] = len(out)
+                out += ("{} 0 obj\n{}\nendobj\n".format(num, body)).encode("latin-1")
+            top = max(offs)
+            xp = len(out)
+            out += ("xref\n0 {}\n0000000000 65535 f \n".format(top + 1)).encode("latin-1")
+            for i in range(1, top + 1):
+                out += ("{:010d} 00000 n \n".format(offs[i])).encode("latin-1")
+            out += ("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF"
+                    .format(top + 1, xp)).encode("latin-1")
+            return bytes(out)
+
+        with open(os.path.join(pdfd, "lease.pdf"), "wb") as f:
+            f.write(_pdf_bytes(
+                "The lock-in period in the lease deed is 36 months. "
+                "Early termination requires 3 months notice."))
+        cls._old = dict(os.environ)
+        os.environ["CHROMA_PATH"] = os.path.join(cls.tmp, "chroma")
+        os.environ["LLM_BASE_URL"] = "http://127.0.0.1:1/v1"
+        import config
+        config.reset_config_cache()
+        from backend import create_vector_db_from_folder
+        ok, _ = create_vector_db_from_folder(pdfd)
+        assert ok
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        os.environ.clear()
+        os.environ.update(cls._old)
+        import config
+        config.reset_config_cache()
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_extraction_renders_table_no_llm(self):
+        import backend
+        from unittest import mock
+        from streamlit.testing.v1 import AppTest
+
+        chunks = [_struct(LEASE, "lease.pdf", 0, 0.85, "c1"),
+                  _struct(CONTRACT, "lease.pdf", 1, 0.8, "c2")]
+
+        with mock.patch("model_warmup.warmup",
+                        return_value={"state": "ready"}), \
+             mock.patch.object(backend, "retrieve_documents",
+                               return_value=[dict(c) for c in chunks]):
+            at = AppTest.from_file(self.APP, default_timeout=180)
+            at.run()
+            at.chat_input[0].set_value("List all notice periods.")
+            at.run()
+            at.run()
+        self.assertFalse(at.exception, at.exception)
+        md = "\n".join(m.value for m in at.markdown)
+        caps = "\n".join(c.value for c in at.caption)
+        self.assertIn("Structured answer", caps)
+        self.assertIn("notice", md.lower())
+        self.assertIn("lease.pdf", md)
+        labels = [b.label for b in at.button]
+        self.assertIn("Open source", labels)
+
+    def test_comparison_renders_per_doc_sources(self):
+        import workflows
+        from unittest import mock
+        from streamlit.testing.v1 import AppTest
+
+        srcs = [_struct(LEASE, "lease.pdf", 0, 0.85, "c1"),
+                _struct(CONTRACT, "contract.pdf", 0, 0.8, "c2")]
+
+        def _fake(prompt_text, **kw):
+            info = {"answer": None, "retrieved": [dict(s) for s in srcs],
+                    "needs_retrieval": True, "support_level": "comparison",
+                    "failed": False,
+                    "timings": {"retrieval_ms": 5, "support_ms": 1,
+                                "preparation_ms": 6, "generation_ms": None},
+                    "workflow": "comparison", "label": "Comparison answer",
+                    "fallback_template": None, "fallback_question": prompt_text}
+
+            def _gen():
+                yield ("| Topic | lease.pdf | contract.pdf |\n"
+                       "36 months lease notice contract.")
+
+            return info, _gen()
+
+        with mock.patch("model_warmup.warmup",
+                        return_value={"state": "ready"}), \
+             mock.patch.object(workflows, "stream_workflow_answer",
+                               side_effect=_fake):
+            at = AppTest.from_file(self.APP, default_timeout=180)
+            at.run()
+            at.chat_input[0].set_value(
+                "Compare the notice periods in lease.pdf and contract.pdf.")
+            at.run()
+            at.run()
+        self.assertFalse(at.exception, at.exception)
+        md = "\n".join(m.value for m in at.markdown)
+        caps = "\n".join(c.value for c in at.caption)
+        self.assertIn("Comparison answer", caps)
+        self.assertIn("lease.pdf", md)
+        self.assertIn("contract.pdf", md)
+
+    def test_open_source_viewer(self):
+        import backend
+        from unittest import mock
+        from streamlit.testing.v1 import AppTest
+
+        chunks = [_struct(LEASE + " Extra detail sentence here.", "lease.pdf",
+                          0, 0.85, "c1")]
+
+        with mock.patch("model_warmup.warmup",
+                        return_value={"state": "ready"}), \
+             mock.patch.object(backend, "retrieve_documents",
+                               return_value=[dict(c) for c in chunks]):
+            at = AppTest.from_file(self.APP, default_timeout=180)
+            at.run()
+            at.chat_input[0].set_value("List all notice periods.")
+            at.run()
+            at.run()
+            opens = [b for b in at.button if b.label == "Open source"]
+            self.assertTrue(opens)
+            opens[0].click().run()
+            at.run()
+        self.assertFalse(at.exception, at.exception)
+        md = "\n".join(m.value for m in at.markdown)
+        self.assertIn("Extra detail sentence here", md)
+        self.assertIn("Close", [b.label for b in at.button])
 
 
 if __name__ == "__main__":

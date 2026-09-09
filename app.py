@@ -219,7 +219,7 @@ with st.sidebar:
         for _key in ("last_followups", "last_failed", "pending_prompt",
                      "starter_cache", "feedback_by_seq", "telemetry_events",
                      "_restore_dismissed", "_restore_snapshot",
-                     "_checklist_dismissed"):
+                     "_checklist_dismissed", "open_source"):
             if _key == "telemetry_events":
                 # Telemetry buffer is per-session ephemeral; a new chat
                 # starts a fresh pilot-evaluation window.
@@ -353,6 +353,65 @@ for message in st.session_state.messages:
                                      help=f"Ask a follow-up about {_row.get('file_name') or 'this document'}."):
                             st.session_state.pending_prompt = _ask_q
                             st.rerun()
+                        # Open source: full page text from already-retrieved
+                        # evidence only (no new loading, no paths exposed).
+                        _open_key = (f"open_{message.get('seq', 0)}_{_idx}")
+                        if st.button("Open source", key=_open_key,
+                                     help="Read the full cited page text."):
+                            st.session_state.open_source = {
+                                "seq": message.get("seq"),
+                                "file": _row.get("file_name"),
+                                "page": _row.get("page")}
+                            st.rerun()
+                # Page viewer (rerun-safe; one open page per session).
+                _viewed = st.session_state.get("open_source") or {}
+                if _viewed.get("seq") == message.get("seq"):
+                    from ui.components import (full_source_html,
+                                               sibling_pages)
+                    _vfile = _viewed.get("file")
+                    _vpage = _viewed.get("page")
+                    _chunks = [s for s in (message.get("sources") or [])
+                               if s.get("file_name") == _vfile
+                               and s.get("page") == _vpage]
+                    if _chunks:
+                        _vtitle = _vfile or "unknown"
+                        if _vpage is not None:
+                            _vtitle += f" p. {_vpage}"
+                        st.markdown(f"**{_vtitle} — full cited text**")
+                        for _c in _chunks:
+                            st.markdown(full_source_html(
+                                {"file_name": _c.get("file_name"),
+                                 "page": _c.get("page"),
+                                 "score": _c.get("score"),
+                                 "score_text": next(
+                                     (r["score_text"] for r in _rows
+                                      if r["file_name"] == _c.get("file_name")
+                                      and r["page"] == _c.get("page")),
+                                     "—"),
+                                 "content": _c.get("content", "") or ""}),
+                                unsafe_allow_html=True)
+                    else:
+                        st.caption("That page is no longer in this answer's "
+                                   "sources.")
+                    _sibs = sibling_pages(message.get("sources"), _vfile,
+                                          exclude_page=_vpage)
+                    if _sibs:
+                        st.caption("Also cited in this answer:")
+                        _scols = st.columns(min(len(_sibs), 4))
+                        for _si, _sp in enumerate(_sibs[:4]):
+                            with _scols[_si]:
+                                _plabel = (f"p. {_sp}" if _sp is not None
+                                           else "no page")
+                                if st.button(_plabel,
+                                             key=(f"page_{message.get('seq', 0)}"
+                                                  f"_{_si}_{_sp}")):
+                                    st.session_state.open_source = {
+                                        "seq": message.get("seq"),
+                                        "file": _vfile, "page": _sp}
+                                    st.rerun()
+                    if st.button("Close", key=f"close_{message.get('seq', 0)}"):
+                        st.session_state.pop("open_source", None)
+                        st.rerun()
             _components.html(
                 copy_button_html(message["content"],
                                  f"copy_{message.get('seq', 0)}"),

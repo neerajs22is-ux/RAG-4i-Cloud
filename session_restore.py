@@ -162,9 +162,11 @@ def restore_messages_into_state(state, snapshot) -> int:
         max_seq = max(max_seq, s)
     state["msg_seq"] = max(int(state.get("msg_seq") or 0), max_seq)
     # Restored turns retire stale follow-up buttons; they rebuild on next answer.
+    # The source page viewer is UI-only state pointing at old seqs: drop it.
     state.pop("last_followups", None)
     state.pop("pending_prompt", None)
     state.pop("last_failed", None)
+    state.pop("open_source", None)
     return len(msgs)
 
 

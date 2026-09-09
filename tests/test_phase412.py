@@ -382,6 +382,35 @@ class TestSummary(unittest.TestCase):
                             backend.PROMPT_TEMPLATE)
 
 
+class TestNavigation(unittest.TestCase):
+    def test_sibling_pages(self):
+        from ui.components import sibling_pages
+        sources = [_struct("a", "x.pdf", 0, 0.9, "c1"),
+                   _struct("b", "x.pdf", 2, 0.8, "c2"),
+                   _struct("c", "y.pdf", 0, 0.7, "c3")]
+        self.assertEqual(sibling_pages(sources, "x.pdf", exclude_page=0), [2])
+        self.assertEqual(sibling_pages(sources, "y.pdf"), [0])
+
+    def test_full_html_no_path_leak(self):
+        from ui.components import full_source_html
+        row = {"file_name": "lease.pdf", "page": 1, "score_text": "0.84",
+               "content": "The lock-in period is 36 months. " * 40}
+        html = full_source_html(row)
+        self.assertIn("36 months", html)
+        self.assertNotIn("/t/", html)
+        self.assertNotIn("source_path", html)
+
+    def test_full_html_escapes(self):
+        from ui.components import full_source_html
+        row = {"file_name": "<img src=x>.pdf", "page": 0,
+               "score_text": "0.50",
+               "content": "<script>alert(1)</script> terms"}
+        html = full_source_html(row)
+        self.assertNotIn("<script>alert", html)
+        self.assertNotIn("<img src=x", html)
+        self.assertIn("terms", html)
+
+
 
 
 if __name__ == "__main__":

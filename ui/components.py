@@ -90,6 +90,37 @@ def source_row_html(row) -> str:
     return out
 
 
+def full_source_html(row) -> str:
+    """Full cited page text (escaped). Only filename/page/score/content
+    are rendered — never storage paths or other metadata."""
+    name = escape(row["file_name"]) if row["file_name"] else "unknown"
+    page = f" · p. {int(row['page'])}" if row["page"] is not None else ""
+    out = (f'<div class="rag-source-row">{name}{page} '
+           f"<span class='rag-source-score'>· relevance "
+           f"{row['score_text']}</span></div>")
+    if row.get("content"):
+        out += (f'<div class="rag-source-chunk">'
+                f'{escape(re.sub(r"\s+", " ", row["content"]).strip())}</div>')
+    return out
+
+
+def sibling_pages(sources, file_name, exclude_page=None):
+    """Distinct cited pages for a file within one answer's sources.
+
+    Pure helper for the page viewer (retrieved evidence only).
+    Order kept, duplicates removed.
+    """
+    pages = []
+    for s in sources or []:
+        if (s or {}).get("file_name") != file_name:
+            continue
+        page = (s or {}).get("page")
+        if page == exclude_page or page in pages:
+            continue
+        pages.append(page)
+    return pages
+
+
 def friendly_error(backend_message: str) -> str:
     """Human wording for known backend failures; passthrough otherwise."""
     text = backend_message or ""

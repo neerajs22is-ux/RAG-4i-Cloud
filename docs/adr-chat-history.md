@@ -65,6 +65,25 @@ as a pure-frontend convenience. Do NOT build server-side history for the
 pilot: without auth, isolation, and a retention policy it creates risk
 without user value.
 
+## 9b. Phase 4.11 implementation (accidental-refresh recovery only)
+
+Implemented: browser-local snapshot of the CURRENT conversation only via
+`session_restore.py` (pure serialize/deserialize, fully tested) + a
+one-way `localStorage` saver in the UI. Restore is an explicit
+**Restore / Start fresh** choice with timestamp; New Chat clears the
+backup. No credentials, no document corpus, no vectors, no server-side
+DB writes. Telemetry (`pilot_telemetry.py`) carries metadata only
+(counts/labels/timings/feedback) — never questions, answers, or document
+text — and stays in-memory/replaceable.
+
+Limitation (Streamlit): there is no reliable bidirectional
+localStorage→Python bridge without fragile DOM scraping or stuffing
+legal text into URLs (rejected on privacy grounds). The saver is
+one-way; restore uses an explicit paste + Validate step inside
+“Recover previous session?”. This keeps the flow honest, rerun-safe,
+and free of silent persistence. Revisit only alongside auth/isolation/
+retention per §10.
+
 ## 10. What must change before company-wide deployment
 
 SSO login, per-user isolation in every query path, encrypted server-side

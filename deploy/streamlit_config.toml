@@ -6,3 +6,13 @@ enableCORS = false
 
 [browser]
 gatherUsageStats = false
+
+# Stable base theme (matches ui/tokens.py light values). Custom CSS in
+# ui/css/ only refines components; core colors survive upgrades via this.
+[theme]
+base = "light"
+primaryColor = "#5F8575"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+textColor = "#0F172A"
+font = "sans serif"

@@ -84,17 +84,27 @@ TOKENS = {
 }
 
 
-def css_variables() -> str:
-    """Render :root vars (light) plus dark-scheme overrides."""
+def css_variables(mode: str = "auto") -> str:
+    """Render :root vars (light) plus dark-scheme overrides.
+
+    mode "dark" forces dark values (used by the in-app theme toggle);
+    any other value keeps the OS-preference media query default.
+    """
     lines = [":root {"]
     for group in ("color", "space", "radius", "type", "shadow", "motion"):
         for key, value in TOKENS[group].items():
             lines.append(f"  --rag-{group}-{key}: {value};")
     lines.append("}")
-    lines.append("@media (prefers-color-scheme: dark) {")
-    lines.append("  :root {")
-    for key, value in TOKENS["dark"].items():
-        lines.append(f"  --rag-color-{key}: {value};")
-    lines.append("  }")
-    lines.append("}")
+    if mode == "dark":
+        lines.append(":root {")
+        for key, value in TOKENS["dark"].items():
+            lines.append(f"  --rag-color-{key}: {value};")
+        lines.append("}")
+    else:
+        lines.append("@media (prefers-color-scheme: dark) {")
+        lines.append("  :root {")
+        for key, value in TOKENS["dark"].items():
+            lines.append(f"  --rag-color-{key}: {value};")
+        lines.append("  }")
+        lines.append("}")
     return "\n".join(lines)

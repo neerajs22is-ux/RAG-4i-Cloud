@@ -1,4 +1,7 @@
-/* RAG-4i chat: messages, composer, suggestions, sources, welcome. */
+/* RAG-4i chat: messages, composer, suggestions, sources, welcome.
+   Message styling hangs off our own .rag-msg-* wrappers (emitted by the
+   app around each turn); the two remaining testid selectors below are
+   documented layout resets with no stable Streamlit alternative. */
 
 /* Welcome hero: one quiet moment of emphasis. */
 .rag-welcome {
@@ -22,31 +25,43 @@
   margin: var(--rag-space-lg) 0 var(--rag-space-sm);
 }
 
-/* User turns: compact, distinct, easy to scan. */
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+/* Conversation turns rendered by the app inside these wrappers. */
+.rag-msg {
+  margin-bottom: var(--rag-space-md);
+}
+.rag-msg-user {
   background: var(--rag-color-user-bubble);
   border: 1px solid var(--rag-color-border);
   border-radius: var(--rag-radius-lg);
   padding: var(--rag-space-sm) var(--rag-space-md);
-  margin-bottom: var(--rag-space-md);
 }
-
-/* Assistant turns: dominant reading surface, no card chrome. */
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+.rag-msg-assistant {
   padding: var(--rag-space-sm) 0;
   margin-bottom: var(--rag-space-lg);
 }
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) h1,
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) h2,
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) h3 {
+.rag-msg-assistant h1,
+.rag-msg-assistant h2,
+.rag-msg-assistant h3 {
   font-weight: var(--rag-type-h2-weight);
   margin-top: var(--rag-space-md);
 }
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) li {
+.rag-msg-assistant li {
   margin-bottom: var(--rag-space-xs);
 }
 
+/* Reset Streamlit's own chat bubbles so our wrappers own the visuals.
+   (No stable hook exists for these containers.) */
+[data-testid="stChatMessage"] {
+  background: transparent;
+  border: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* Sources: quiet expander, tabular figures for scores. */
+.rag-sources {
+  margin-top: var(--rag-space-sm);
+}
 [data-testid="stExpander"] {
   border: 1px solid var(--rag-color-border);
   border-radius: var(--rag-radius-md);
@@ -63,42 +78,15 @@
 .rag-source-score {
   color: var(--rag-color-text-muted);
 }
-
-/* Answer-type label: small, quiet, never color-alone (text always present). */
-.rag-answer-label {
-  display: inline-block;
-  font-size: 0.75rem;
-  color: var(--rag-color-text-muted);
-  border: 1px solid var(--rag-color-border);
-  border-radius: var(--rag-radius-pill);
-  padding: 0.1rem 0.6rem;
-  margin: 0 0 var(--rag-space-sm);
-}
-
-/* Copy-answer button (vanilla JS companion in components.py). */
-.rag-copy {
-  border: 1px solid var(--rag-color-border);
-  border-radius: var(--rag-radius-pill);
-  background: transparent;
+.rag-source-chunk {
   color: var(--rag-color-text-secondary);
-  font-size: 0.8rem;
-  padding: 0.3rem 0.9rem;
-  cursor: pointer;
-  transition: border-color var(--rag-motion-fast), color var(--rag-motion-fast);
-}
-.rag-copy:hover {
-  border-color: var(--rag-color-accent);
-  color: var(--rag-color-text);
-}
-.rag-copy:focus-visible {
-  outline: 2px solid var(--rag-color-accent);
-  outline-offset: 2px;
+  font-size: 0.875rem;
+  margin: var(--rag-space-xs) 0 var(--rag-space-sm);
+  padding-left: var(--rag-space-sm);
+  border-left: 2px solid var(--rag-color-border);
 }
 
 /* Suggestion buttons wrap into readable rows. */
-.rag-suggestions [data-testid="column"] {
-  min-width: 10rem;
-}
 .rag-suggestions .stButton > button {
   width: 100%;
   white-space: normal;
@@ -117,10 +105,15 @@
 [data-testid="stChatInput"] textarea:disabled {
   opacity: 0.6;
 }
+.rag-composer-hint {
+  color: var(--rag-color-text-muted);
+  font-size: 0.8rem;
+  margin-bottom: var(--rag-space-xs);
+}
 
 @media (max-width: 640px) {
-  .rag-suggestions [data-testid="column"] {
-    min-width: 100%;
+  .rag-suggestions .stButton > button {
+    width: 100%;
   }
   .stButton > button {
     min-height: 2.75rem;

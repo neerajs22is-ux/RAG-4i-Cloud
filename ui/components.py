@@ -6,6 +6,7 @@ Backend data passes through untouched; only wording/styling adapts.
 
 import html
 import os
+import re
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -25,11 +26,11 @@ ERROR_COPY = {
 }
 
 
-def load_styles() -> str:
+def load_styles(theme: str = "auto") -> str:
     """Combined <style> block: tokens first, then section stylesheets."""
     from ui.tokens import css_variables
 
-    parts = [css_variables()]
+    parts = [css_variables("dark" if theme == "dark" else "auto")]
     for name in ("base.css", "chat.css"):
         path = os.path.join(_BASE, "css", name)
         with open(path, encoding="utf-8") as f:
@@ -42,7 +43,11 @@ def escape(text: str) -> str:
 
 
 def format_source_rows(sources):
-    """Source rows preserving filename/page/score exactly."""
+    """Source rows preserving filename/page/score exactly.
+
+    Filenames come from document metadata (untrusted input) and are
+    HTML-escaped here; scores render with fixed 2-decimal formatting.
+    """
     rows = []
     seen = set()
     for s in sources or []:
@@ -56,8 +61,22 @@ def format_source_rows(sources):
             "page": s.get("page"),
             "score": score,
             "score_text": f"{score:.2f}" if score is not None else "—",
+            "content": s.get("content", "") or "",
         })
     return rows
+
+
+def source_row_html(row) -> str:
+    """One escaped source row (filename/page/score + chunk preview)."""
+    name = escape(row["file_name"]) if row["file_name"] else "unknown"
+    page = f" · p. {int(row['page'])}" if row["page"] is not None else ""
+    out = (f'<div class="rag-source-row">{name}{page} '
+           f"<span class='rag-source-score'>· relevance "
+           f"{row['score_text']}</span></div>")
+    if row.get("content"):
+        out += (f'<div class="rag-source-chunk">'
+                f'{escape(row["content"][:500])}</div>')
+    return out
 
 
 def friendly_error(backend_message: str) -> str:
@@ -74,6 +93,18 @@ def friendly_error(backend_message: str) -> str:
 def suggestion_button_label(text: str, limit: int = 80) -> str:
     """Full suggestion text (Streamlit wraps); shortened only for keys."""
     return text or ""
+
+
+def export_chat_markdown(messages) -> str:
+    """Conversation export (user/assistant text + cited sources)."""
+    lines = ["# RAG-4i conversation", ""]
+    for message in messages or []:
+        role = message.get("role", "")
+        lines.append("## User" if role == "user" else "## Assistant")
+        lines.append("")
+        lines.append(message.get("content", "") or "")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def response_label(prompt: str, sources, needs_retrieval: bool):
@@ -93,15 +124,21 @@ def response_label(prompt: str, sources, needs_retrieval: bool):
 
 
 def copy_button_html(text: str, key: str) -> str:
-    """Vanilla-JS copy button (clipboard API with legacy fallback)."""
+    """Vanilla-JS copy button bound by explicit element ID.
+
+    The button carries id="rag-copy-<key>" and looks itself up — no
+    sibling-DOM assumptions. Clipboard API with legacy fallback.
+    """
     import json
 
     payload = json.dumps(text or "")
+    safe_key = re.sub(r"[^A-Za-z0-9_-]", "_", key or "x")
+    element_id = f"rag-copy-{safe_key}"
     return (
-        f"<button class='rag-copy' data-key='{html.escape(key)}' "
+        f"<button class='rag-copy' id='{element_id}' "
         f"data-payload='{html.escape(payload)}'>Copy answer</button>"
         "<script>(function(){"
-        "var b=document.currentScript.previousElementSibling;"
+        f"var b=document.getElementById('{element_id}');"
         "if(!b||b.dataset.done)return;b.dataset.done='1';"
         "b.addEventListener('click',function(){"
         "var t=JSON.parse(b.dataset.payload);"

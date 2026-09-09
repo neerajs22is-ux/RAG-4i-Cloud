@@ -1,4 +1,7 @@
+import logging
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 from backend import (
     check_llm_status,
@@ -11,16 +14,23 @@ from ui.components import (
     WELCOME_BODY,
     WELCOME_TITLE,
     copy_button_html,
+    export_chat_markdown,
     format_source_rows,
     friendly_error,
     load_styles,
+    source_row_html,
 )
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="RAG-4i — Document Assistant", layout="centered")
-st.markdown(load_styles(), unsafe_allow_html=True)
 
 cfg = get_config()
+
+# Theme: OS preference by default, toggle persists for the session.
+if "theme" not in st.session_state:
+    st.session_state.theme = "auto"
+st.markdown(load_styles("dark" if st.session_state.theme == "dark" else "auto"),
+            unsafe_allow_html=True)
 
 # --- SIDEBAR: KNOWLEDGE BASE SETUP (controls unchanged) ---
 is_cloud = (getattr(cfg, "document_storage", "local") or "local").lower() == "s3"
@@ -102,24 +112,71 @@ with st.sidebar:
     storage_label = (getattr(cfg, "document_storage", "local") or "local")
     st.caption(f"Document storage: **{storage_label.capitalize()}**")
 
-# --- HEADER: quiet identity + live document status ---
+    with st.expander("Manage indexed documents"):
+        st.caption("Removing a document deletes its indexed vectors. "
+                   "Source files are left untouched.")
+        try:
+            from vector_store import get_vector_store
+            from embeddings import get_embedding_provider
+            _vs = get_vector_store(cfg, get_embedding_provider(cfg))
+            _srcs = _vs.list_sources()
+        except Exception:
+            logger.warning("Source listing unavailable (see logs).")
+            _srcs = []
+        if not _srcs:
+            st.caption("No indexed documents found.")
+        for _s in _srcs:
+            _fname = _s.get("file_name") or "unknown"
+            _col_a, _col_b = st.columns([3, 1])
+            _col_a.write(_fname)
+            if _col_b.button("Remove", key=f"rm_{_fname}",
+                             help=f"Delete indexed vectors for {_fname}."):
+                from backend import delete_indexed_document
+                _res = delete_indexed_document(_s.get("document_id"))
+                st.toast(f"Removed {_res['vectors_removed']} vectors for {_fname}.")
+                st.rerun()
+
+    st.markdown("---")
+    _theme_options = ["auto", "light", "dark"]
+    _current = st.session_state.theme if st.session_state.theme in _theme_options else "auto"
+    _picked = st.radio("Appearance", _theme_options,
+                       index=_theme_options.index(_current),
+                       help="Follow your system setting or force light/dark.",
+                       horizontal=True)
+    if _picked != st.session_state.theme:
+        st.session_state.theme = _picked
+        st.rerun()
+
+    st.markdown("---")
+    if st.session_state.get("messages"):
+        from ui.components import export_chat_markdown
+        st.download_button(
+            "Export chat",
+            data=export_chat_markdown(st.session_state.messages),
+            file_name="rag4i-chat.md",
+            mime="text/markdown",
+            help="Download this conversation as Markdown.",
+        )
+    if st.button("New chat", help="Clear messages and conversation memory."):
+        st.session_state.messages = []
+        from conversation_memory import ConversationMemory
+        st.session_state.memory = ConversationMemory()
+        for _key in ("last_followups", "last_failed", "pending_prompt"):
+            st.session_state.pop(_key, None)
+        st.rerun()
+
+# --- HEADER: quiet identity + live document status (native components) ---
+st.title("RAG-4i")
+st.caption("Ask questions about your connected documents.")
 if kb_ready:
-    _docline = "Documents ready"
     _counts = []
     if kb.get("document_count") is not None:
         _counts.append(f"{kb['document_count']} documents")
     if kb.get("chunk_count") is not None:
         _counts.append(f"{kb['chunk_count']} indexed chunks")
-    if _counts:
-        _docline += " · " + " · ".join(_counts)
+    st.caption("Documents ready" + (f" · {' · '.join(_counts)}" if _counts else ""))
 else:
-    _docline = "Document workspace"
-st.markdown(
-    f'<div class="rag-header"><h1>RAG-4i</h1>'
-    f"<p>Ask questions about your connected documents.</p>"
-    f'<p class="rag-docline">{_docline}</p></div>',
-    unsafe_allow_html=True,
-)
+    st.caption("Document workspace")
 
 # --- MAIN CHAT INTERFACE ---
 # Initialize chat history + bounded conversation memory (recent turns only).
@@ -133,12 +190,9 @@ if "model_state" not in st.session_state:
 
 # --- MODEL GATE: real readiness, never simulated ---
 if st.session_state.model_state is None:
-    st.markdown(
-        '<div class="rag-welcome"><h2>RAG-4i</h2>'
-        "<p>Your document intelligence workspace.</p>"
-        "<p>Loading the assistant model…</p></div>",
-        unsafe_allow_html=True,
-    )
+    st.header(WELCOME_TITLE)
+    st.write(WELCOME_BODY)
+    st.caption("Loading the assistant model…")
     from model_warmup import READY, warmup
     with st.spinner("Loading model…"):
         result = warmup(cfg)
@@ -150,11 +204,8 @@ model_ready = isinstance(_model, dict) and _model.get("state") == "ready"
 if not model_ready:
     detail = _model.get("detail", "The assistant is unavailable.") \
         if isinstance(_model, dict) else "The assistant is unavailable."
-    st.markdown(
-        '<div class="rag-welcome"><h2>RAG-4i</h2>'
-        f"<p>{detail}</p></div>",
-        unsafe_allow_html=True,
-    )
+    st.header(WELCOME_TITLE)
+    st.write(detail)
     if st.button("Retry connection"):
         st.session_state.model_state = None
         st.toast("Retrying connection…")
@@ -165,9 +216,10 @@ if not model_ready:
 # metadata every run, so reruns never wipe labels/sources/copy buttons).
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
+        st.markdown(f"<div class='rag-msg rag-msg-{message['role']}'>",
+                    unsafe_allow_html=True)
         if message.get("label"):
-            st.markdown(f"<p class='rag-answer-label'>{message['label']}</p>",
-                        unsafe_allow_html=True)
+            st.caption(message["label"])
         if message.get("notice") == "no-context":
             st.warning(
                 f"Retrieved **0 chunks** above the relevance "
@@ -189,18 +241,18 @@ for message in st.session_state.messages:
                 _bits.append(f"relevance {_first['score_text']}")
             with st.expander(f"Sources · {' · '.join(_bits)}" if _rows else "Sources"):
                 for _row in _rows:
-                    _page = f" · p. {_row['page']}" if _row["page"] is not None else ""
-                    st.markdown(
-                        f'<div class="rag-source-row">{_row["file_name"] or "unknown"}'
-                        f"{_page} <span class='rag-source-score'>· relevance "
-                        f"{_row['score_text']}</span></div>",
-                        unsafe_allow_html=True,
-                    )
+                    _ptitle = _row["file_name"] or "unknown"
+                    if _row["page"] is not None:
+                        _ptitle += f" p. {_row['page']}"
+                    _ptitle += f" · relevance {_row['score_text']}"
+                    with st.expander(_ptitle, expanded=False):
+                        st.markdown(source_row_html(_row), unsafe_allow_html=True)
             _components.html(
                 copy_button_html(message["content"],
                                  f"copy_{message.get('seq', 0)}"),
                 height=44,
             )
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _initial_suggestions():
@@ -298,7 +350,7 @@ def _handle_prompt(prompt_text):
 
         except Exception:
             # No raw stack trace for normal users; details go to console/log.
-            print("UI query failed (see logs for details).")
+            logger.warning("UI query failed (see logs for details).")
             status.update(label="Something went wrong", state="error")
             st.session_state.last_failed = prompt_text
             st.error(friendly_error("An error occurred while answering. "
@@ -311,8 +363,7 @@ def _handle_prompt(prompt_text):
 
 # Retry card for the last failed question (same pipeline, no new logic).
 if st.session_state.get("last_failed") and not st.session_state.get("pending_prompt"):
-    st.markdown("<p class='rag-prompt-label'>The last answer failed.</p>",
-                unsafe_allow_html=True)
+    st.caption("The last answer failed.")
     if st.button("Retry answer", key="retry_last"):
         st.session_state.pending_prompt = st.session_state.pop("last_failed")
         st.rerun()
@@ -321,44 +372,48 @@ if st.session_state.get("last_failed") and not st.session_state.get("pending_pro
 # Follow-up buttons for the latest grounded answer. Rendered at top level
 # on EVERY rerun so clicks always materialize (this was the bug: buttons
 # previously existed only inside prompt handling, so clicks were lost).
+# Stacked full-width: readable on every screen size without media queries.
 from suggestions import current_followups as _current_followups
 _followup_specs = _current_followups(st.session_state)
 if _followup_specs:
-    st.markdown("**You may also ask:**")
-    _cols = st.columns(len(_followup_specs))
-    for _col, _spec in zip(_cols, _followup_specs):
-        if _col.button(_spec["label"], key=_spec["key"]):
+    st.caption("You may also ask")
+    for _spec in _followup_specs:
+        if st.button(_spec["label"], key=_spec["key"], use_container_width=True):
             if "pending_prompt" not in st.session_state:
                 st.session_state.pending_prompt = _spec["label"]
             st.rerun()
 
 # Welcome hero + starter suggestions for a fresh conversation.
 if not st.session_state.messages:
-    st.markdown(
-        f'<div class="rag-welcome"><h2>{WELCOME_TITLE}</h2><p>{WELCOME_BODY}</p></div>',
-        unsafe_allow_html=True,
-    )
+    st.header(WELCOME_TITLE)
+    st.write(WELCOME_BODY)
     try:
         if get_knowledge_base_status().get("ready"):
-            st.markdown('<p class="rag-prompt-label">Try asking</p>',
-                        unsafe_allow_html=True)
+            st.caption("Try asking")
             starters = _initial_suggestions()
-            cols = st.columns(len(starters))
-            for i, (col, sug) in enumerate(zip(cols, starters)):
-                if col.button(sug, key=f"starter_{i}"):
+            for i, sug in enumerate(starters):
+                if st.button(sug, key=f"starter_{i}", use_container_width=True):
                     st.session_state.pending_prompt = sug
                     st.rerun()
         else:
             st.info("Add documents using the Knowledge base panel, "
                     "then come back and ask away.")
     except Exception:
-        print("Starter suggestions unavailable (see logs).")
+        logger.warning("Starter suggestions unavailable (see logs).")
 
 # Handle User Input (typed or clicked suggestion, one pipeline).
 pending = st.session_state.pop("pending_prompt", None)
+_composer_disabled = not (kb_ready and model_ready)
+if _composer_disabled:
+    if not kb_ready:
+        st.caption("Chat is disabled until the knowledge base is built. "
+                   "Use “Build/Update Database” in the Knowledge base panel first.")
+    else:
+        st.caption("Chat is disabled until the assistant model is ready. "
+                   "Use “Retry connection” above if this persists.")
 typed = st.chat_input(
     "Ex: What is the lock-in period in the lease deed?",
-    disabled=not (kb_ready and model_ready),
+    disabled=_composer_disabled,
 )
 if pending or typed:
     _handle_prompt(pending or typed)

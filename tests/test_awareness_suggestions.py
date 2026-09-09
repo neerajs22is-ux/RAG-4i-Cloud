@@ -78,6 +78,36 @@ class TestInitialSuggestions(unittest.TestCase):
             self.assertNotIn("contract", s.lower())
 
 
+class TestGroundedInitialSuggestions(unittest.TestCase):
+    def _retrieve(self, hits):
+        def _fn(question):
+            return [{"content": "x"}] if question in hits else []
+        return _fn
+
+    def test_keeps_only_retrieving_questions(self):
+        from suggestions import grounded_initial_suggestions
+        out = grounded_initial_suggestions(
+            self._retrieve({"Tell me about lease.pdf"}),
+            ["lease.pdf", "contract.pdf"])
+        self.assertIn("Tell me about lease.pdf", out)
+        self.assertEqual(len(out), 3)
+
+    def test_falls_back_when_nothing_retrieves(self):
+        from suggestions import grounded_initial_suggestions, initial_suggestions
+        out = grounded_initial_suggestions(lambda q: [],
+                                           ["lease.pdf", "contract.pdf"])
+        self.assertEqual(out, initial_suggestions(["lease.pdf", "contract.pdf"]))
+
+    def test_retrieval_errors_are_skipped(self):
+        from suggestions import grounded_initial_suggestions
+
+        def _boom(question):
+            raise RuntimeError("down")
+
+        out = grounded_initial_suggestions(_boom, ["lease.pdf"])
+        self.assertEqual(len(out), 3)
+
+
 class TestFollowupSuggestions(unittest.TestCase):
     def _src(self, content="The lock-in period is 36 months. Renewal needs notice.",
              fname="lease.pdf"):

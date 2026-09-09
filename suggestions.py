@@ -85,6 +85,51 @@ def initial_suggestions(file_names, limit: int = 3) -> List[str]:
     return out[:limit]
 
 
+_STARTER_FORMS = [
+    "What does {file} cover?",
+    "Tell me about {file}",
+    "What are the key terms in {file}?",
+]
+
+
+def grounded_initial_suggestions(retrieve_fn, file_names, limit: int = 3) -> List[str]:
+    """Starters that provably retrieve (probed, then filled with fallback).
+
+    Each candidate is run through retrieve_fn (same thresholded retrieval
+    the app uses); only questions with >=1 hit are kept. Generic probes
+    and finally initial_suggestions() fill any remaining slots, so the
+    result is always exactly `limit` and never worse than before.
+    """
+    out = []
+    for name in (file_names or []):
+        for form in _STARTER_FORMS:
+            question = form.format(file=name)
+            try:
+                hits = retrieve_fn(question)
+            except Exception:
+                continue
+            if hits:
+                out.append(question)
+                break
+        if len(out) >= limit:
+            break
+    for question in _GENERIC_INITIAL:
+        if len(out) >= limit:
+            break
+        try:
+            hits = retrieve_fn(question)
+        except Exception:
+            continue
+        if hits and question not in out:
+            out.append(question)
+    for question in initial_suggestions(file_names, limit):
+        if len(out) >= limit:
+            break
+        if question not in out:
+            out.append(question)
+    return out[:limit]
+
+
 def followup_suggestions(question: str, retrieved: List[Dict],
                          limit: int = 3) -> List[str]:
     """Exactly `limit` follow-ups from retrieved context (or safe fallback).

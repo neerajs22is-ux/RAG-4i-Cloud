@@ -188,7 +188,8 @@ with st.sidebar:
         st.session_state.messages = []
         from conversation_memory import ConversationMemory
         st.session_state.memory = ConversationMemory()
-        for _key in ("last_followups", "last_failed", "pending_prompt"):
+        for _key in ("last_followups", "last_failed", "pending_prompt",
+                     "starter_cache"):
             st.session_state.pop(_key, None)
         st.rerun()
 
@@ -285,16 +286,31 @@ for message in st.session_state.messages:
 
 
 def _initial_suggestions():
-    """Starter questions from the real index (generic fallback if empty)."""
-    from suggestions import initial_suggestions
+    """Starter questions, probed against the index with per-session cache.
+
+    Only questions that actually retrieve (>=1 hit through the real
+    thresholded pipeline) are shown; the plain filename fallback fills
+    any remaining slots, so output is never worse than before.
+    """
+    from suggestions import grounded_initial_suggestions, initial_suggestions
     try:
         from vector_store import get_vector_store
         from embeddings import get_embedding_provider
+        from backend import retrieve_documents
         vs = get_vector_store(cfg, get_embedding_provider(cfg))
         files = [s["file_name"] for s in vs.list_sources()]
     except Exception:
-        files = []
-    return initial_suggestions(files)
+        return initial_suggestions([])
+    cache = st.session_state.get("starter_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+    key = tuple(files)
+    if key not in cache:
+        def _probe(question):
+            return retrieve_documents(question, vector_store=vs)
+        cache[key] = grounded_initial_suggestions(_probe, files)
+        st.session_state.starter_cache = cache
+    return cache[key]
 
 
 def _handle_prompt(prompt_text):
@@ -320,6 +336,10 @@ def _handle_prompt(prompt_text):
     _count_before = len(st.session_state.messages)
 
     # 2. Generate Assistant Response (honest staged loading).
+    # Preparation (routing/retrieval/assessment) runs inside the status
+    # block; the streaming chat renders OUTSIDE it so status-nesting can
+    # never swallow or misplace streamed output.
+    _prep = {"ok": False}
     with st.status("Working on your question…", expanded=False) as status:
         def _phase(name):
             status.update(
@@ -343,74 +363,10 @@ def _handle_prompt(prompt_text):
             from output_safety import is_empty_response
             info, stream = stream_answer(
                 prompt_text, conversation_context=history, on_phase=_phase)
-            needs_retrieval = info["needs_retrieval"]
-            sources = info["retrieved"]
-            if info["answer"] is not None:
-                # Decided without generation (routed/unsupported/fallback).
-                response_text = info["answer"]
-            else:
-                with st.chat_message("assistant"):
-                    placeholder = st.empty()
-                    pieces = []
-                    try:
-                        for piece in stream:
-                            pieces.append(piece)
-                            placeholder.markdown("".join(pieces) + "▍")
-                    except Exception:
-                        # Discard the broken partial render; fall back to
-                        # non-streaming generation with the SAME evidence.
-                        logger.warning("Stream failed mid-answer; falling back.")
-                        pieces = [generate_answer(
-                            prompt_text, sources,
-                            support_level=info["support_level"])]
-                    response_text = "".join(pieces)
-                    placeholder.empty()
-                if is_empty_response(response_text):
-                    response_text = EMPTY_RESPONSE_MESSAGE
-
-            # Explicit retrieval status for document questions only;
-            # routed replies (chat/out-of-scope) intentionally skip retrieval.
-            notice = None
-            if not sources and needs_retrieval:
-                notice = "no-context"
-                display_text = friendly_error(response_text)
-            else:
-                display_text = response_text
-
-            # Sources: quiet expander, citation data preserved exactly.
-            if sources:
-                rows = format_source_rows(sources)
-                source_text = ""
-                for row in rows:
-                    label = row["file_name"] or "unknown"
-                    if row["page"] is not None:
-                        label += f" (p. {row['page']})"
-                    label += f" [{row['score_text']}]"
-                    source_text += label + ", "
-                source_text = f"\n\n**Sources:** *{source_text.rstrip(', ')}*" if rows else ""
-            else:
-                source_text = ""
-
-            full_response = display_text + source_text
-
-            # 3. Record Assistant Message (label/sources/notice ride along).
-            # The live stream above already showed this turn; the trailing
-            # rerun re-renders everything from state (no duplication: each
-            # run renders live output once, then state once).
-            _label = response_label(prompt_text, sources, needs_retrieval)
-            from ui.components import retrieval_strength
-            _push("assistant", full_response, label=_label,
-                  sources=sources, notice=notice,
-                  strength=retrieval_strength(sources))
-            st.session_state.memory.add("assistant", full_response)
-            st.session_state.pop("last_failed", None)
-
-            # 4. Persist for top-level suggestion rendering (buttons must
-            # exist on every rerun, not only inside prompt handling).
-            from suggestions import remember_followups
-            remember_followups(st.session_state, prompt_text, sources)
-            status.update(label="Done", state="complete")
-
+            _prep.update(ok=True, info=info, stream=stream,
+                         needs_retrieval=info["needs_retrieval"],
+                         sources=info["retrieved"])
+            status.update(label="Preparation done", state="complete")
         except Exception:
             # No raw stack trace for normal users; details go to console/log.
             logger.warning("UI query failed (see logs for details).")
@@ -418,6 +374,83 @@ def _handle_prompt(prompt_text):
             st.session_state.last_failed = prompt_text
             st.error(friendly_error("An error occurred while answering. "
                                     "Make sure LM Studio Server is running!"))
+            return
+
+    if not _prep["ok"]:
+        return
+    info, stream = _prep["info"], _prep["stream"]
+    needs_retrieval, sources = _prep["needs_retrieval"], info["retrieved"]
+    try:
+        if info["answer"] is not None:
+            # Decided without generation (routed/unsupported/fallback).
+            response_text = info["answer"]
+        else:
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                pieces = []
+                try:
+                    for piece in stream:
+                        pieces.append(piece)
+                        placeholder.markdown("".join(pieces) + "▍")
+                except Exception:
+                    # Discard the broken partial render; fall back to
+                    # non-streaming generation with the SAME evidence.
+                    logger.warning("Stream failed mid-answer; falling back.")
+                    pieces = [generate_answer(
+                        prompt_text, sources,
+                        support_level=info["support_level"])]
+                response_text = "".join(pieces)
+                placeholder.empty()
+        if is_empty_response(response_text):
+            response_text = EMPTY_RESPONSE_MESSAGE
+
+        # Explicit retrieval status for document questions only;
+        # routed replies (chat/out-of-scope) intentionally skip retrieval.
+        notice = None
+        if not sources and needs_retrieval:
+            notice = "no-context"
+            display_text = friendly_error(response_text)
+        else:
+            display_text = response_text
+
+        # Sources: quiet expander, citation data preserved exactly.
+        if sources:
+            rows = format_source_rows(sources)
+            source_text = ""
+            for row in rows:
+                label = row["file_name"] or "unknown"
+                if row["page"] is not None:
+                    label += f" (p. {row['page']})"
+                label += f" [{row['score_text']}]"
+                source_text += label + ", "
+            source_text = f"\n\n**Sources:** *{source_text.rstrip(', ')}*" if rows else ""
+        else:
+            source_text = ""
+
+        full_response = display_text + source_text
+
+        # 3. Record Assistant Message (label/sources/notice ride along).
+        # The live stream above already showed this turn; the trailing
+        # rerun re-renders everything from state (no duplication: each
+        # run renders live output once, then state once).
+        _label = response_label(prompt_text, sources, needs_retrieval)
+        from ui.components import retrieval_strength
+        _push("assistant", full_response, label=_label,
+              sources=sources, notice=notice,
+              strength=retrieval_strength(sources))
+        st.session_state.memory.add("assistant", full_response)
+        st.session_state.pop("last_failed", None)
+
+        # 4. Persist for top-level suggestion rendering (buttons must
+        # exist on every rerun, not only inside prompt handling).
+        from suggestions import remember_followups
+        remember_followups(st.session_state, prompt_text, sources)
+    except Exception:
+        # No raw stack trace for normal users; details go to console/log.
+        logger.warning("UI query failed (see logs for details).")
+        st.session_state.last_failed = prompt_text
+        st.error(friendly_error("An error occurred while answering. "
+                                "Make sure LM Studio Server is running!"))
 
     # Refresh only when new messages exist (errors stay visible as-is).
     if len(st.session_state.messages) > _count_before:

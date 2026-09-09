@@ -708,6 +708,99 @@ def _retrieve_all(query_text, cfg, vs):
     return hits, _ms(_t0, time.monotonic())
 
 
+def _run_summary(query_text, detected, config, vector_store,
+                 llm_provider, known_files, t0, on_phase, stream):
+    from llm_provider import get_llm_provider
+
+    cfg = config
+    if cfg is None:
+        from config import get_config
+        cfg = get_config()
+    vs = _resolve_store(cfg, vector_store)
+    if known_files is None:
+        known_files = known_file_names(vs)
+    if on_phase is not None:
+        on_phase("retrieving")
+    _s0 = time.monotonic()
+    resolved = resolve_summary_target(detected.get("mentioned") or [],
+                                      known_files)
+    support_ms = _ms(_s0, time.monotonic())
+    if resolved.get("clarification"):
+        timings = {"retrieval_ms": 0, "support_ms": support_ms,
+                   "preparation_ms": _ms(t0, time.monotonic()),
+                   "generation_ms": 0 if not stream else None}
+        info = {"answer": resolved["clarification"], "retrieved": [],
+                "needs_retrieval": True, "support_level": None,
+                "failed": False, "timings": timings,
+                "workflow": SUMMARY, "label": "Partial answer",
+                "fallback_template": None, "fallback_question": query_text}
+        return _wrap(info, stream)
+    target = resolved["target"]
+    chunks = summary_chunks(target, vs)
+    if not chunks:
+        timings = {"retrieval_ms": 0, "support_ms": support_ms,
+                   "preparation_ms": _ms(t0, time.monotonic()),
+                   "generation_ms": 0 if not stream else None}
+        info = {"answer": (
+                    f"I don't have enough indexed material in {target} "
+                    f"to summarize it yet. Build the knowledge base first."),
+                "retrieved": [], "needs_retrieval": True,
+                "support_level": None, "failed": False, "timings": timings,
+                "workflow": SUMMARY, "label": "Not enough context",
+                "fallback_template": None, "fallback_question": query_text}
+        return _wrap(info, stream)
+    provider = llm_provider or get_llm_provider(cfg)
+    timings = {"retrieval_ms": 0, "support_ms": support_ms,
+               "preparation_ms": _ms(t0, time.monotonic()),
+               "generation_ms": None}
+    if len(chunks) <= SUMMARY_GROUP_SIZE:
+        context = _evidence_block(target, chunks)
+        template = SUMMARY_PROMPT_TEMPLATE
+    else:
+        # Bounded staged summarization: sequential part-summaries over
+        # capped groups, then one final call (no fanout, no extra models).
+        parts = []
+        for i in range(0, len(chunks), SUMMARY_GROUP_SIZE):
+            group = chunks[i:i + SUMMARY_GROUP_SIZE]
+            grp_ctx = _evidence_block(target, group)
+            try:
+                raw = provider.generate(
+                    grp_ctx,
+                    f"Summarize this section of {target}.",
+                    SUMMARY_PART_PROMPT_TEMPLATE)
+                from output_safety import strip_think_blocks
+                parts.append(strip_think_blocks(raw))
+            except Exception as e:
+                logger.warning("Summary part failed: %s", e)
+                raise ConnectionError(
+                    "LLM endpoint is unreachable. Make sure LM Studio "
+                    "Server is running.")
+        context = (f"--- Part-summaries of {target} ---\n"
+                   + "\n\n".join(parts))
+        template = SUMMARY_PROMPT_TEMPLATE
+    info = {"answer": None, "retrieved": chunks, "needs_retrieval": True,
+            "support_level": "summary", "failed": False,
+            "timings": timings, "workflow": SUMMARY, "label": SUMMARY_LABEL,
+            "fallback_template": template, "fallback_question": query_text,
+            "workflow_context": context, "workflow_provider": provider}
+    if not stream:
+        from backend import EMPTY_RESPONSE_MESSAGE
+        from output_safety import is_empty_response, strip_think_blocks
+
+        try:
+            raw = provider.generate(context, query_text, template)
+        except Exception as e:
+            logger.warning("Summary generation failed: %s", e)
+            raise ConnectionError(
+                "LLM endpoint is unreachable. Make sure LM Studio Server "
+                "is running.")
+        answer = strip_think_blocks(raw)
+        if is_empty_response(raw):
+            answer = EMPTY_RESPONSE_MESSAGE
+        return answer, chunks, info
+    return _stream_generated(info, context, query_text, template, provider)
+
+
 def _one_shot(text):
     yield text
 

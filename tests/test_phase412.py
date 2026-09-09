@@ -306,6 +306,82 @@ class TestExtraction(unittest.TestCase):
             self.assertTrue(m.called)
 
 
+class TestSummary(unittest.TestCase):
+    def test_explicit_summary_targets_file(self):
+        from workflows import SUMMARY_LABEL, query_workflow
+        ans, sources, info = query_workflow(
+            "Summarize lease.pdf.", config=_cfg(),
+            vector_store=FakeStore(), llm_provider=FakeLLM())
+        self.assertEqual(info["label"], SUMMARY_LABEL)
+        self.assertTrue(all(s["file_name"] == "lease.pdf" for s in sources))
+        self.assertIn("SYNTHESIZED", ans)
+
+    def test_topical_question_stays_normal(self):
+        from workflows import NORMAL, detect_workflow
+        self.assertEqual(
+            detect_workflow("What does lease.pdf say about renewal?")["workflow"],
+            NORMAL)
+
+    def test_missing_document_no_llm(self):
+        from workflows import query_workflow
+        llm = FakeLLM()
+        ans, sources, _info = query_workflow(
+            "Summarize ghost.pdf.", config=_cfg(),
+            vector_store=FakeStore(), llm_provider=llm)
+        self.assertEqual(sources, [])
+        self.assertIn("ghost.pdf", ans)
+        self.assertEqual(llm.calls, [])
+
+    def test_chunk_budget_bounded(self):
+        from workflows import MAX_SUMMARY_CHUNKS, summary_chunks
+
+        class BigStore(FakeStore):
+            def chunks_for_source(self, file_name, limit=8):
+                self.limits.append(limit)
+                return super().chunks_for_source(
+                    file_name, limit=min(limit, MAX_SUMMARY_CHUNKS))
+
+        store = BigStore()
+        chunks = summary_chunks("lease.pdf", store)
+        self.assertLessEqual(len(chunks), MAX_SUMMARY_CHUNKS)
+        self.assertTrue(all(lim <= MAX_SUMMARY_CHUNKS for lim in store.limits))
+
+    def test_staged_large_document(self):
+        from workflows import SUMMARY_GROUP_SIZE, query_workflow
+
+        class ManyStore(FakeStore):
+            def chunks_for_source(self, file_name, limit=8):
+                base = super().chunks_for_source(file_name, limit=8)
+                if file_name != "lease.pdf":
+                    return base
+                out = []
+                for i in range(SUMMARY_GROUP_SIZE + 2):
+                    d = Doc(f"Clause {i}: the lock-in period term {i} months.",
+                            {"source_path": "/t/lease.pdf", "source": "/t/lease.pdf",
+                             "file_name": "lease.pdf", "page": i,
+                             "document_id": "d-lease.pdf",
+                             "chunk_id": f"c-big-{i}"})
+                    out.append((d, None))
+                return out
+
+        llm = FakeLLM()
+        ans, sources, info = query_workflow(
+            "Summarize lease.pdf.", config=_cfg(),
+            vector_store=ManyStore(), llm_provider=llm)
+        # Staged: >1 part call + 1 final call, sequential same provider.
+        self.assertGreaterEqual(len(llm.calls), 2)
+        self.assertLessEqual(len(sources), 24)
+        self.assertIn("SYNTHESIZED", ans)
+
+    def test_new_prompts_leave_old_ones_alone(self):
+        import backend
+        import workflows
+        self.assertNotEqual(workflows.SUMMARY_PROMPT_TEMPLATE,
+                            backend.PROMPT_TEMPLATE)
+        self.assertNotEqual(workflows.COMPARISON_PROMPT_TEMPLATE,
+                            backend.PROMPT_TEMPLATE)
+
+
 
 
 if __name__ == "__main__":

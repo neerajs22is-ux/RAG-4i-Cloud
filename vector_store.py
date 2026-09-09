@@ -35,6 +35,10 @@ class VectorStore(ABC):
         """
         return []
 
+    def delete_by_document(self, document_id: str) -> int:
+        """Remove a document's chunks. Default: unsupported (0 removed)."""
+        return 0
+
     def chunks_for_source(self, file_name: str, limit: int = 8):
         """Same-file chunks as admissible file evidence for overviews.
 
@@ -78,25 +82,58 @@ class ChromaVectorStore(VectorStore):
             embedding_function=self._embedding(),
         )
 
+    @staticmethod
+    def _chunk_ids(chunks) -> list:
+        """Stable content-derived IDs so re-indexing upserts idempotently."""
+        import hashlib
+
+        ids = []
+        for i, chunk in enumerate(chunks):
+            meta = getattr(chunk, "metadata", {}) or {}
+            key = meta.get("chunk_id") or "%s:%s:%s" % (
+                meta.get("document_id", "?"),
+                meta.get("start_index", i),
+                getattr(chunk, "page_content", "") or "",
+            )
+            ids.append(hashlib.sha1(str(key).encode("utf-8")).hexdigest())
+        return ids
+
     def build_index(self, chunks) -> int:
-        """Append chunks to existing index (append-only). Returns added count."""
+        """Add chunks idempotently (same content -> same IDs, upserted)."""
         from langchain_community.vectorstores import Chroma
 
+        chunks = list(chunks or [])
         if not chunks:
             return 0
+        ids = self._chunk_ids(chunks)
         if os.path.isdir(self.persist_directory) and os.listdir(self.persist_directory):
             db = self._load_existing()
-            # add_documents preserves existing data (duplicates acceptable P1).
-            ids = db.add_documents(documents=chunks)
-            return len(ids) if ids else len(chunks)
+            new_ids = db.add_documents(documents=chunks, ids=ids)
+            return len(new_ids) if new_ids else len(chunks)
         else:
             os.makedirs(self.persist_directory, exist_ok=True)
             Chroma.from_documents(
                 documents=chunks,
                 embedding=self._embedding(),
                 persist_directory=self.persist_directory,
+                ids=ids,
             )
             return len(chunks)
+
+    def delete_by_document(self, document_id: str) -> int:
+        """Remove all chunks for a document_id. Returns removed count."""
+        if not document_id:
+            return 0
+        try:
+            db = self._load_existing()
+            existing = db._collection.get(where={"document_id": document_id},
+                                          include=[])
+            ids = (existing or {}).get("ids", [])
+            if ids:
+                db._collection.delete(ids=list(ids))
+            return len(ids)
+        except Exception:
+            return 0
 
     def search(self, query: str, k: int = 5):
         db = self._load_existing()
@@ -172,7 +209,11 @@ class ChromaVectorStore(VectorStore):
         return status
 
     def list_sources(self, limit: int = 50):
-        """Distinct source filenames (best-effort; [] when unavailable)."""
+        """Distinct sources (best-effort; [] when unavailable).
+
+        Returns [{"file_name": str, "document_id": str|None}] — the
+        document_id powers the delete flow.
+        """
         try:
             db = self._load_existing()
             try:
@@ -183,12 +224,13 @@ class ChromaVectorStore(VectorStore):
             if metadatas is None:
                 got = db._collection.get(limit=limit, include=["metadatas"])
                 metadatas = got.get("metadatas") if isinstance(got, dict) else []
-            seen = []
+            seen = {}
             for m in metadatas or []:
                 name = (m or {}).get("file_name")
                 if name and name not in seen:
-                    seen.append(name)
-            return [{"file_name": n} for n in seen[:limit]]
+                    seen[name] = (m or {}).get("document_id")
+            return [{"file_name": n, "document_id": seen[n]}
+                    for n in list(seen)[:limit]]
         except Exception:
             return []
 

@@ -97,10 +97,10 @@ class TestVectorStoreStatus(unittest.TestCase):
         self.assertEqual(st["chunk_count"], 3)
         self.assertEqual(st["document_count"], 2)
         self.assertTrue(vs.is_ready())
-        # Append-only: second build grows, never deletes.
-        vs.build_index(make_chunks()[:1])
+        # Idempotent: re-indexing the same chunks upserts, never duplicates.
+        vs.build_index(make_chunks())
         st2 = vs.get_status()
-        self.assertEqual(st2["chunk_count"], 4)
+        self.assertEqual(st2["chunk_count"], 3)
         self.assertEqual(st2["document_count"], 2)
 
     def test_search_returns_scored_tuples(self):

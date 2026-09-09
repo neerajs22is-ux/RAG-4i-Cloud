@@ -51,24 +51,56 @@ class LocalDocumentStorage(DocumentStorage):
             [os.path.abspath(p) for p in files if os.path.isfile(p)]
         )
 
+    def _contained(self, path: str) -> str:
+        """Absolute path, verified to stay inside base_dir (no traversal)."""
+        abs_path = os.path.abspath(path)
+        if os.path.commonpath([self.base_dir, abs_path]) != self.base_dir:
+            raise ValueError(f"Path escapes the document folder: {path}")
+        return abs_path
+
     def get_document(self, path: str) -> bytes:
-        with open(path, "rb") as f:
+        with open(self._contained(path), "rb") as f:
             return f.read()
 
     def save_document(self, filename: str, data: bytes) -> str:
-        dest = os.path.abspath(os.path.join(self.base_dir, filename))
+        dest = self._contained(os.path.join(self.base_dir, filename))
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(data)
         return dest
 
     def delete_document(self, path: str) -> None:
-        abs_path = os.path.abspath(path)
+        abs_path = self._contained(path)
         if os.path.isfile(abs_path):
             os.remove(abs_path)
 
     def ensure_exists(self) -> bool:
         return os.path.isdir(self.base_dir)
+
+
+def validate_local_path(path: str, must_exist: bool = True) -> str:
+    """Validate a local folder path; returns its absolute form.
+
+    Raises ValueError on empty paths, NUL bytes, or (when must_exist)
+    missing/non-directory paths. No silent acceptance.
+    """
+    if not path or not path.strip() or "\x00" in path:
+        raise ValueError("Folder path is required.")
+    abs_path = os.path.abspath(path)
+    if must_exist and not os.path.isdir(abs_path):
+        raise ValueError(f"Folder path is not a directory: {path}")
+    return abs_path
+
+
+def validate_s3_prefix(prefix: str) -> str:
+    """Validate an S3 prefix (no leading slash, no empty keys, no '..')."""
+    from s3_document_storage import normalize_prefix
+
+    if prefix is None:
+        raise ValueError("S3 prefix is required.")
+    if ".." in prefix.replace("\\", "/").split("/"):
+        raise ValueError("S3 prefix must not contain '..'.")
+    return normalize_prefix(prefix)
 
 
 def get_document_storage(config=None, folder=None):

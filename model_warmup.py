@@ -11,6 +11,10 @@ the shared embedding-provider cache.
 """
 
 from typing import Dict
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 LOADING = "loading"
 READY = "ready"
@@ -26,17 +30,20 @@ def warmup(config=None) -> Dict:
     if cfg is None:
         from config import get_config
         cfg = get_config()
+    _t0 = time.monotonic()
     try:
         provider = get_embedding_provider(cfg)
         fn = provider.get_embedding_function()
         fn.embed_query("readiness probe")
         embeddings = {"state": READY, "model": provider.model_name}
     except Exception as e:
-        print(f"Embedding warmup failed: {e}")
+        logger.warning("Embedding warmup failed: %s", e)
         return {"state": UNAVAILABLE, "embeddings": {"state": UNAVAILABLE},
                 "llm": {"reachable": False},
                 "detail": "Embedding model could not be loaded."}
     llm = check_llm_status(config=cfg)
+    logger.info("warmup finished in %.2fs (llm reachable=%s)",
+                time.monotonic() - _t0, llm.get("reachable"))
     if not llm.get("reachable"):
         return {"state": UNAVAILABLE, "embeddings": embeddings, "llm": llm,
                 "detail": "Model loaded, but the assistant endpoint "

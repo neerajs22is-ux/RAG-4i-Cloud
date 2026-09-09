@@ -143,7 +143,7 @@ class PostgresVectorStore:
         return out
 
     def list_sources(self, limit: int = 50):
-        """Distinct source filenames (best-effort; [] when unavailable)."""
+        """Distinct sources with a representative document_id each."""
         try:
             conn = self._connect()
         except Exception:
@@ -152,12 +152,34 @@ class PostgresVectorStore:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        f"SELECT DISTINCT file_name FROM {self.table} "
-                        f"WHERE file_name IS NOT NULL ORDER BY 1 LIMIT %s",
+                        f"SELECT file_name, MIN(document_id) FROM {self.table} "
+                        f"WHERE file_name IS NOT NULL GROUP BY 1 ORDER BY 1 "
+                        f"LIMIT %s",
                         (limit,))
-                    return [{"file_name": r[0]} for r in cur.fetchall() if r[0]]
+                    return [{"file_name": r[0], "document_id": r[1]}
+                            for r in cur.fetchall() if r[0]]
         except Exception:
             return []
+        finally:
+            conn.close()
+
+    def delete_by_document(self, document_id: str) -> int:
+        """Delete a document's chunks. Returns removed row count."""
+        if not document_id:
+            return 0
+        try:
+            conn = self._connect()
+        except Exception:
+            return 0
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"DELETE FROM {self.table} WHERE document_id = %s",
+                        (document_id,))
+                    return cur.rowcount or 0
+        except Exception:
+            return 0
         finally:
             conn.close()
 

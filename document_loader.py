@@ -1,8 +1,11 @@
 """PDF locate/load step of ingestion (PyPDFLoader, unchanged behaviour)."""
 
 import hashlib
+import logging
 import os
 from typing import Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 def stable_document_id(source_path: str) -> str:
@@ -86,7 +89,7 @@ def load_documents_from_folder(folder_path: str, storage=None):
             report["failed"] += 1
             report["failed_files"].append(os.path.basename(pdf_file))
             report["failed_errors"][os.path.basename(pdf_file)] = str(e)
-            print(f"Error loading {pdf_file}: {e}")
+            logger.warning("Error loading %s: %s", pdf_file, e)
             continue
     return documents, report
 
@@ -151,7 +154,7 @@ def load_documents_from_s3(storage, tmp_dir=None):
                     key.replace("\\", "/").split("/")[-1])
                 report["failed_errors"][
                     key.replace("\\", "/").split("/")[-1]] = str(e)
-                print(f"Error loading {key}: {e}")
+                logger.warning("Error loading %s: %s", key, e)
                 continue
     finally:
         if tmp_dir is None:

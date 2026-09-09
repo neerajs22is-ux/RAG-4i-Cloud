@@ -6,9 +6,13 @@ Preserved behaviour:
 - No destructive rebuild (existing Chroma data is kept).
 """
 
+import logging
 import os
+import time
 
 from config import get_config
+
+logger = logging.getLogger(__name__)
 
 # --- PROMPT (UNCHANGED from original RAG-4i) --- #
 PROMPT_TEMPLATE = """
@@ -97,7 +101,7 @@ def ingest_with_report(folder_path, config=None,
         try:
             documents, report = load_documents_from_s3(storage)
         except Exception as e:
-            print(f"S3 ingestion failed: {e}")
+            logger.warning("S3 ingestion failed: %s", e)
             return False, f"Failed to read from S3: {e}", details
     else:
         if not folder_path:
@@ -119,7 +123,7 @@ def ingest_with_report(folder_path, config=None,
         try:
             documents, report = load_documents_from_folder(folder_path, storage)
         except Exception as e:
-            print(f"Ingestion failed: {e}")
+            logger.warning("Ingestion failed: %s", e)
             return False, f"Failed to scan folder: {e}", details
 
     details.update({k: report.get(k, details[k])
@@ -166,7 +170,7 @@ def ingest_with_report(folder_path, config=None,
             chunk_overlap=getattr(cfg, "chunk_overlap", CHUNK_OVERLAP),
         )
     except Exception as e:
-        print(f"Chunking failed: {e}")
+        logger.warning("Chunking failed: %s", e)
         return False, f"Failed to chunk documents: {e}", details
 
     if not chunks:
@@ -182,7 +186,7 @@ def ingest_with_report(folder_path, config=None,
         added = vector_store.build_index(chunks)
         details["vectors_stored"] = added
     except Exception as e:
-        print(f"Vector store build failed: {e}")
+        logger.warning("Vector store build failed: %s", e)
         return False, (
             "Failed to build the index (vector DB unavailable). "
             "Check that dependencies are installed and chroma_db is writable."
@@ -344,14 +348,14 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
     try:
         raw = provider.generate(context_text, question, template)
     except Exception as e:
-        print(f"LLM generation failed: {e}")
+        logger.warning("LLM generation failed: %s", e)
         raise ConnectionError(
             "LLM endpoint is unreachable. Make sure LM Studio Server is running "
             f"at {getattr(cfg, 'llm_base_url', 'http://localhost:1234/v1')}."
         )
     answer = strip_think_blocks(raw)
     if is_empty_response(raw):
-        print("LLM returned only hidden reasoning or empty text.")
+        logger.info("LLM returned only hidden reasoning or empty text.")
         return ("The model returned an empty response. "
                 "Please try again.")
     return answer
@@ -378,6 +382,7 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     if obs.intent in (CONVERSATION, CAPABILITY, OUT_OF_SCOPE):
         return reply_for_route(query_text, obs.intent), []
     cfg = config or get_config()
+    _t0 = time.monotonic()
     retrieval_query = query_text
     if obs.intent == DOCUMENT_FOLLOWUP:
         retrieval_query = expand_followup_query(query_text, conversation_context)
@@ -407,7 +412,7 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
                     seen.add(struct.get("chunk_id"))
                     retrieved.append(struct)
     except Exception as e:
-        print(f"Retrieval failed: {e}")
+        logger.warning("Retrieval failed: %s", e)
         return (
             "The knowledge base is unavailable. Please build the index first "
             "and check that the vector database is accessible.",
@@ -430,12 +435,14 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     except ConnectionError as e:
         return str(e), retrieved
     except Exception as e:
-        print(f"Query failed: {e}")
+        logger.warning("Query failed: %s", e)
         return (
             "An error occurred while generating the answer. "
             "Make sure LM Studio Server is running.",
             retrieved,
         )
+    logger.info("query answered in %.2fs (sources=%d, route=%s)",
+                time.monotonic() - _t0, len(retrieved), obs.intent)
     return answer, retrieved
 
 
@@ -444,6 +451,40 @@ def classify_query(query_text) -> str:
     from query_router import route_query
 
     return route_query(query_text)
+
+
+def delete_indexed_document(document_id: str, config=None, vector_store=None,
+                            storage=None, storage_path=None) -> dict:
+    """Delete a document's vectors (and optionally its stored file).
+
+    Additive-safe inverse of ingestion: removes chunks matching document_id
+    from the active vector store; if storage+storage_path are given, also
+    deletes the stored file. Never touches other documents.
+    Returns {"vectors_removed": int, "file_removed": bool}.
+    """
+    from vector_store import get_vector_store
+
+    cfg = config or get_config()
+    vs = vector_store
+    if vs is None:
+        from embeddings import get_embedding_provider
+
+        vs = get_vector_store(cfg, get_embedding_provider(cfg))
+    try:
+        removed = vs.delete_by_document(document_id) or 0
+    except Exception as e:
+        logger.warning("Vector delete failed for %s: %s", document_id, e)
+        removed = 0
+    file_removed = False
+    if storage is not None and storage_path:
+        try:
+            storage.delete_document(storage_path)
+            file_removed = True
+        except Exception as e:
+            logger.warning("File delete failed for %s: %s", storage_path, e)
+    logger.info("delete document_id=%s vectors=%d file=%s",
+                document_id, removed, file_removed)
+    return {"vectors_removed": removed, "file_removed": file_removed}
 
 
 # ---------- Status helpers (for UI, all from actual checks) ---------- #

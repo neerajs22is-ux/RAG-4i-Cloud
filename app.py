@@ -286,17 +286,16 @@ for message in st.session_state.messages:
 
 
 def _initial_suggestions():
-    """Starter questions, probed against the index with per-session cache.
+    """Starter questions, validated against the real answer path.
 
-    Only questions that actually retrieve (>=1 hit through the real
-    thresholded pipeline) are shown; the plain filename fallback fills
-    any remaining slots, so output is never worse than before.
+    Only questions that would reach generation (routing, broad-scope
+    top-up, support assessment) are shown; the plain filename fallback
+    fills any remaining slots, so output is never worse than before.
     """
     from suggestions import grounded_initial_suggestions, initial_suggestions
     try:
         from vector_store import get_vector_store
         from embeddings import get_embedding_provider
-        from backend import retrieve_documents
         vs = get_vector_store(cfg, get_embedding_provider(cfg))
         files = [s["file_name"] for s in vs.list_sources()]
     except Exception:
@@ -306,8 +305,11 @@ def _initial_suggestions():
         cache = {}
     key = tuple(files)
     if key not in cache:
+        from backend import preview_answer
+
         def _probe(question):
-            return retrieve_documents(question, vector_store=vs)
+            return preview_answer(question, vector_store=vs)["will_generate"]
+
         cache[key] = grounded_initial_suggestions(_probe, files)
         st.session_state.starter_cache = cache
     return cache[key]

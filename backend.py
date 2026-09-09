@@ -455,12 +455,22 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         if broad and target_file:
             # Source-aware top-up: same-file chunks as admissible file
             # evidence (threshold still guards query-similarity results).
+            # Degrades to retrieval-only if the provider top-up fails.
+            similar = len(retrieved)
+            try:
+                top_up = vector_store.chunks_for_source(target_file)
+            except Exception as e:
+                logger.warning("Source top-up failed for %s: %s",
+                               target_file, e)
+                top_up = []
             seen = {s.get("chunk_id") for s in retrieved}
-            for doc, _score in vector_store.chunks_for_source(target_file):
+            for doc, _score in top_up:
                 struct = _to_structured_source(doc, None)
                 if struct.get("chunk_id") not in seen:
                     seen.add(struct.get("chunk_id"))
                     retrieved.append(struct)
+            logger.info("broad scope file=%s similar=%d total=%d",
+                        target_file, similar, len(retrieved))
     except Exception as e:
         logger.warning("Retrieval failed: %s", e)
         return {"failed": True, "answer": (
@@ -479,6 +489,33 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
     return {"failed": False, "answer": None, "retrieved": retrieved,
             "support_level": level, "provider": provider}
+
+
+def preview_answer(query_text, config=None, vector_store=None,
+                   conversation_context=None):
+    """Decide whether a question would reach generation (no LLM call).
+
+    Runs the exact preparation stream_answer uses (routing, broad-scope
+    top-up, support assessment) and reports whether a generated answer
+    would follow. Used to validate suggested questions before showing
+    them. Returns {"will_generate": bool, "reason": str}.
+    """
+    from query_router import (CAPABILITY, CONVERSATION,
+                              OUT_OF_SCOPE, observe_query)
+
+    cfg = config or get_config()
+    obs = observe_query(query_text, conversation_context)
+    if obs.intent in (CONVERSATION, CAPABILITY, OUT_OF_SCOPE):
+        return {"will_generate": False,
+                "reason": "routed reply, no generation"}
+    prepared = _prepare_generation(query_text, cfg, vector_store, None,
+                                   conversation_context, obs)
+    if prepared["failed"]:
+        return {"will_generate": False, "reason": "retrieval unavailable"}
+    if prepared["answer"] is not None:
+        return {"will_generate": False,
+                "reason": "decided without generation"}
+    return {"will_generate": True, "reason": "generation"}
 
 
 def stream_answer(query_text, config=None, vector_store=None,

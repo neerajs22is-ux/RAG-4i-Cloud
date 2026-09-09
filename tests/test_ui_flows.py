@@ -110,6 +110,49 @@ class UIFlowCase(unittest.TestCase):
         self.assertFalse(at.exception, at.exception)
         self.assertTrue(any(m.type == "chat_message" for m in at.main))
 
+    def test_starter_click_produces_answer_not_refusal(self):
+        import backend
+        from streamlit.testing.v1 import AppTest
+
+        def _fake_stream_answer(prompt_text, **kw):
+            info = {"answer": None, "retrieved": [{
+                "content": "The lock-in period is 36 months.",
+                "source": "/t/lease.pdf", "source_path": "/t/lease.pdf",
+                "file_name": "lease.pdf", "page": 0, "score": 0.8,
+                "document_id": "d", "chunk_id": "c"}],
+                "needs_retrieval": True, "support_level": None,
+                "failed": False}
+
+            def _gen():
+                yield "The lock-in period is 36 months."
+
+            return info, _gen()
+
+        with mock.patch("model_warmup.warmup",
+                        return_value={"state": "ready"}), \
+             mock.patch.object(backend, "stream_answer",
+                               side_effect=_fake_stream_answer), \
+             mock.patch.object(backend, "preview_answer",
+                               return_value={"will_generate": True,
+                                             "reason": "generation"}):
+            at = AppTest.from_file(APP, default_timeout=180)
+            at.run()
+            starters = [b for b in at.button
+                        if b.label not in ("Build/Update Database",
+                                           "Build/Update Database from S3",
+                                           "Retry connection", "Retry answer",
+                                           "New chat", "Remove")]
+            self.assertEqual(len(starters), 3)
+            starters[0].click().run()
+            # Click runs can take an extra rerun to settle.
+            at.run()
+        self.assertFalse(at.exception, at.exception)
+        texts = [m.value for m in at.markdown]
+        self.assertTrue(any("36 months" in t for t in texts), texts)
+        joined = "\n".join(texts)
+        self.assertNotIn("could not find", joined.lower())
+        self.assertNotIn("unavailable", joined.lower())
+
     def test_disabled_composer_explains_why(self):
         import config
         from streamlit.testing.v1 import AppTest

@@ -93,12 +93,14 @@ _STARTER_FORMS = [
 
 
 def grounded_initial_suggestions(retrieve_fn, file_names, limit: int = 3) -> List[str]:
-    """Starters that provably retrieve (probed, then filled with fallback).
+    """Starters that would actually produce a generated answer.
 
-    Each candidate is run through retrieve_fn (same thresholded retrieval
-    the app uses); only questions with >=1 hit are kept. Generic probes
-    and finally initial_suggestions() fill any remaining slots, so the
-    result is always exactly `limit` and never worse than before.
+    retrieve_fn is a will-generate predicate over the REAL decision path
+    (routing, broad-scope top-up, support assessment — e.g.
+    backend.preview_answer), not retrieval alone: retrieval hits can
+    still end in refusal, which the predicate excludes. Generic probes
+    and finally initial_suggestions() fill remaining slots, so output is
+    always exactly `limit` and never worse than before.
     """
     out = []
     for name in (file_names or []):

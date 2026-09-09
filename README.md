@@ -154,22 +154,34 @@ streamlit run app.py
 ## How to query
 
 1. Wait for `Knowledge Base: Ready` + `LLM: Reachable` in the sidebar.
-   The composer stays disabled (with an explanation) until both are ready.
+   A first-run **Get started** checklist shows live Model/KB state and
+   disappears once both are ready (dismissible). The composer stays
+   disabled (with an explanation) until both are ready.
 2. Ask in the chat box (e.g. “What is the lock-in period in the lease deed?”).
    Answers stream in as they are generated.
 3. Answers are grounded in retrieved chunks; sources show
    `filename (p. N) [score]` with an expandable chunk excerpt, plus a
    `Retrieval strength · X.XX` similarity note (not a probability).
+   Each answer also shows real `Answered in X.Xs · N sources` timing.
    Low-relevance queries return the
    “could not find enough relevant information” fallback.
 4. Use **Copy answer** (per message), **Export chat**, or **New chat**
-   from the sidebar. Appearance follows your system setting unless you
+   from the sidebar. Each source preview has **Ask about this document**
+   (asks “Tell me more about `<file>`” through the normal pipeline).
+   Rate answers with 👍/👎; 👎 offers a fixed reason set (no extra LLM).
+   Appearance follows your system setting unless you
    pick Light/Dark in the sidebar.
 5. When evidence only partly covers a question, the assistant asks one
    clarifying question first (reply “yes” to proceed); answers that go
    beyond the evidence are marked down to Partial with an
    “unverified against sources” note. Starter questions are validated
    to be answerable before they are shown.
+6. Accidental refresh: the app keeps a browser-local snapshot
+   (`localStorage`, current conversation only, no server storage). Use
+   **Recover previous session?** to paste a backup and **Restore** /
+   **Start fresh**. **New chat** clears messages, memory, follow-ups,
+   feedback, and restore state only — documents, vectors, and config
+   are untouched.
 
 ## PostgreSQL/pgvector (Phase 2)
 

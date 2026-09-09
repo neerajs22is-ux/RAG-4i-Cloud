@@ -104,7 +104,10 @@ class UIFlowCase(unittest.TestCase):
                         if b.label not in ("Build/Update Database",
                                            "Build/Update Database from S3",
                                            "Retry connection", "Retry answer",
-                                           "New chat", "Remove")]
+                                           "New chat", "Remove",
+                                           "Restore", "Start fresh", "Dismiss",
+                                           "Ask about this document",
+                                           "👍", "👎", "👍 ✓", "👎 ✓")]
             self.assertEqual(len(starters), 3)
             starters[0].click().run()
         self.assertFalse(at.exception, at.exception)
@@ -141,7 +144,10 @@ class UIFlowCase(unittest.TestCase):
                         if b.label not in ("Build/Update Database",
                                            "Build/Update Database from S3",
                                            "Retry connection", "Retry answer",
-                                           "New chat", "Remove")]
+                                           "New chat", "Remove",
+                                           "Restore", "Start fresh", "Dismiss",
+                                           "Ask about this document",
+                                           "👍", "👎", "👍 ✓", "👎 ✓")]
             self.assertEqual(len(starters), 3)
             starters[0].click().run()
             # Click runs can take an extra rerun to settle.

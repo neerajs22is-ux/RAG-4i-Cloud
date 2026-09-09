@@ -99,8 +99,12 @@ def full_source_html(row) -> str:
            f"<span class='rag-source-score'>· relevance "
            f"{row['score_text']}</span></div>")
     if row.get("content"):
+        # Note: the sub result lives outside the f-string: backslash
+        # sequences inside f-string expressions are a SyntaxError on the
+        # EC2 Python 3.11 (allowed only from 3.12).
+        cleaned = escape(re.sub(r"\s+", " ", row["content"]).strip())
         out += (f'<div class="rag-source-chunk">'
-                f'{escape(re.sub(r"\s+", " ", row["content"]).strip())}</div>')
+                f'{cleaned}</div>')
     return out
 
 

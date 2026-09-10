@@ -191,6 +191,69 @@ with st.sidebar:
                 st.toast(f"Removed {_res['vectors_removed']} vectors for {_fname}.")
                 st.rerun()
 
+    with st.expander("Session documents", expanded=False):
+        st.caption("PDFs for this browser session only. They are searched "
+                   "together with the knowledge base, never shared across "
+                   "sessions. Limits: PDF, 10 MB/file, 5 files, 50 MB total.")
+        _uploads = st.file_uploader(
+            "Upload PDFs", type=["pdf"], accept_multiple_files=True,
+            key="sess_upload",
+            help="PDFs up to 10 MB each (5 files / 50 MB per session).")
+        if _uploads and st.button(
+                f"Index {len(_uploads)} file(s) in this session",
+                key="sess_index"):
+            from session_uploads import ingest_session_upload
+            _total = len(_uploads)
+            _progress = st.progress(0, text="Starting…")
+            _ustatus = st.status("Indexing session documents…",
+                                 expanded=False)
+            for _i, _up in enumerate(_uploads, 1):
+                try:
+                    _data = _up.getvalue()
+                except Exception:
+                    logger.warning("Upload read failed (see logs).")
+                    st.error(f"⚠️ {_up.name}: could not be read.")
+                    continue
+                _progress.progress(_i / _total if _total else 0,
+                                   text=f"{_i} / {_total} files processed")
+                _ustatus.update(label=f"Processing {_up.name}…")
+
+                def _on_file_progress(_c, _t, _fn, _outcome):
+                    _ustatus.update(label=f"{_fn}: {_outcome}…")
+
+                try:
+                    _res = ingest_session_upload(
+                        _data, _up.name,
+                        st.session_state.get("session_id"),
+                        registry=st.session_state.get("session_docs"),
+                        on_progress=_on_file_progress)
+                except Exception:
+                    logger.warning("Session upload failed (see logs).")
+                    st.error(f"⚠️ {_up.name}: indexing failed unexpectedly.")
+                    continue
+                if _res.get("status") in ("ready", "already-indexed"):
+                    st.success(
+                        f"{_res['display_name']}: indexed "
+                        f"({_res.get('chunks_indexed', 0)} chunks).")
+                else:
+                    st.error(f"⚠️ {_res.get('display_name', _up.name)}: "
+                             f"{_res.get('error', 'rejected')}")
+            _progress.empty()
+            _ustatus.update(label="Session indexing finished",
+                            state="complete")
+            st.rerun()
+        _docs = st.session_state.get("session_docs") or []
+        if not _docs:
+            st.caption("No session documents yet.")
+        for _d in _docs:
+            _kb = (_d.get("size_bytes") or 0) / 1024
+            _st = _d.get("status", "")
+            _extra = "" if _st == "ready" else f" · {_st}"
+            if _d.get("error") and _st not in ("ready", "already-indexed"):
+                _extra += f" — {_d['error']}"
+            st.caption(f"{_d.get('display_name', 'document')} "
+                       f"({_kb:.0f} KB{_extra})")
+
     st.markdown("---")
     _theme_options = ["auto", "light", "dark"]
     _current = st.session_state.theme if st.session_state.theme in _theme_options else "auto"
@@ -228,6 +291,10 @@ with st.sidebar:
                 st.session_state.pop(_key, None)
         # msg_seq stays monotonic so message IDs are never reused
         # (telemetry + feedback keys stay unique within the session).
+        # Session detach: fresh binding, registry cleared, vectors kept
+        # (no physical deletion — retention is a later concern).
+        from session_uploads import rotate_session_id
+        rotate_session_id(st.session_state)
         st.session_state["_clear_backup"] = True
         st.rerun()
 
@@ -259,6 +326,12 @@ if "telemetry_events" not in st.session_state:
     st.session_state.telemetry_events = []
 if "msg_seq" not in st.session_state:
     st.session_state.msg_seq = 0
+# Session scope (Phase 5C): one opaque browser-session binding for
+# session uploads. Minted once, rebound on restore, rotated on New Chat.
+if "session_docs" not in st.session_state:
+    st.session_state.session_docs = []
+from session_uploads import ensure_session_id
+ensure_session_id(st.session_state)
 
 # --- MODEL GATE: real readiness, never simulated ---
 if st.session_state.model_state is None:
@@ -506,12 +579,16 @@ def _initial_suggestions():
     cache = st.session_state.get("starter_cache")
     if not isinstance(cache, dict):
         cache = {}
-    key = tuple(files)
+    # Session-bound: starters may name session documents, so the cache
+    # key includes the binding (no cross-session suggestion leakage).
+    _sid = st.session_state.get("session_id")
+    key = (tuple(files), _sid)
     if key not in cache:
         from backend import preview_answer
 
         def _probe(question):
-            return preview_answer(question, vector_store=vs)["will_generate"]
+            return preview_answer(question, vector_store=vs,
+                                  session_id=_sid)["will_generate"]
 
         cache[key] = grounded_initial_suggestions(_probe, files)
         st.session_state.starter_cache = cache
@@ -575,7 +652,8 @@ def _handle_prompt(prompt_text):
             from workflows import stream_workflow_answer
             from output_safety import is_empty_response
             info, stream = stream_workflow_answer(
-                prompt_text, conversation_context=history, on_phase=_phase)
+                prompt_text, conversation_context=history, on_phase=_phase,
+                session_id=st.session_state.get("session_id"))
             _prep.update(ok=True, info=info, stream=stream,
                          needs_retrieval=info["needs_retrieval"],
                          sources=info["retrieved"])
@@ -819,6 +897,9 @@ if not st.session_state.messages:
                         _snap = deserialize_conversation(_raw)
                         if _snap.get("ok") and _snap.get("messages"):
                             _n = restore_messages_into_state(st.session_state, _snap)
+                            from session_restore import restore_session_into_state
+                            if restore_session_into_state(st.session_state, _snap):
+                                st.toast("Session documents rebound.")
                             # Rebuild memory anchors from restored user turns
                             # (assistant text never becomes retrieval evidence).
                             try:
@@ -860,7 +941,9 @@ try:
     import json as _json2
     from session_restore import serialize_conversation as _ser
     if st.session_state.get("messages"):
-        _snap2 = _ser(st.session_state.messages)
+        _snap2 = _ser(st.session_state.messages, session={
+            "id": st.session_state.get("session_id"),
+            "documents": st.session_state.get("session_docs")})
         _components2.html(localstorage_saver_html(_json2.dumps(_snap2)), height=0)
     if st.session_state.pop("_clear_backup", False):
         _components2.html(localstorage_clearer_html(), height=0)

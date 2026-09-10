@@ -13,9 +13,25 @@
 - No server-side chat history in Phase 5 scope (chat-history ADR stands).
 - No embedding replacement, no HNSW migration, no global RAG rewrite.
 
+## DECIDED (5C)
+
+- Uploads: PDF-only (magic bytes authoritative), 10 MB/file,
+  5 files/session, 50 MB/session; encrypted/corrupt rejected per-file.
+- S3 keys at bucket root `sessions/<sid>/uploads/<stem>-<sha12>.pdf`
+  (outside the corpus prefix); local mirror under SESSION_STORAGE_DIR.
+- Identity: `sha1("session-doc:" + sid + content_sha256 + safe_name)`;
+  same-session re-upload is idempotent; no cross-session or
+  persistent collisions by construction.
+- Ordering: validate → store object → load/chunk/embed/index →
+  scoped verify → ready; build failures clean up best-effort, partial
+  states never marked ready, retry safe via deterministic IDs.
+- New Chat rotates the binding (detach, vectors kept); restore rebinds
+  same-lineage snapshots; starter cache is session-keyed.
+- No per-doc remove UI, no retention job, no promotion, no scope toggle.
+
 ## DECIDED (5B)
 
-- Scope primitives implemented; session uploads (5C) still pending.
+- Scope primitives implemented (5B); session uploads implemented (5C).
 - `document_id` stays path-derived in 5B (content-derived move
   deferred: changing identity now would break delete flows and
   existing IDs for zero 5B benefit).

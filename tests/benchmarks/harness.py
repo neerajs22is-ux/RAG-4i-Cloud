@@ -48,11 +48,21 @@ def live_bedrock_llm():
 
 
 class DictStore:
-    """Deterministic word-overlap store (no embeddings, no network)."""
+    """Deterministic word-overlap store (no embeddings, no network).
+
+    Documents may carry "scope"/"sid" (session rows); filtering mirrors
+    the provider rule: persistent always visible, session rows only on
+    a matching session_id. Omitting both keeps legacy persistent-only.
+    """
 
     def __init__(self, documents, score=0.9):
         self._docs = list(documents or [])
         self._score = score
+
+    def _visible(self, d, session_id):
+        if d.get("scope") == "session":
+            return d.get("sid") is not None and d.get("sid") == session_id
+        return True
 
     def _as_doc(self, d, i):
         return Doc(d["text"], {"source_path": "/bench/" + d["file"],
@@ -62,28 +72,30 @@ class DictStore:
                                "document_id": "bench-" + d["file"],
                                "chunk_id": f"bench-{i}"})
 
-    def search(self, query, k=5):
+    def search(self, query, k=5, session_id=None):
         words = [w for w in (query or "").lower().split() if len(w) >= 4]
         out = []
         for i, d in enumerate(self._docs):
+            if not self._visible(d, session_id):
+                continue
             low = d["text"].lower()
             if any(w in low for w in words):
                 out.append((self._as_doc(d, i), self._score))
         return out[:k]
 
-    def chunks_for_source(self, file_name, limit=8):
+    def chunks_for_source(self, file_name, limit=8, session_id=None):
         out = []
         for i, d in enumerate(self._docs):
-            if d["file"] == file_name:
+            if d["file"] == file_name and self._visible(d, session_id):
                 out.append((self._as_doc(d, i), None))
             if len(out) >= limit:
                 break
         return out
 
-    def list_sources(self, limit=50):
+    def list_sources(self, limit=50, session_id=None):
         seen = []
         for d in self._docs:
-            if d["file"] not in seen:
+            if d["file"] not in seen and self._visible(d, session_id):
                 seen.append(d["file"])
         return [{"file_name": f, "document_id": "bench-" + f}
                 for f in seen[:limit]]
@@ -140,6 +152,16 @@ def load_cases(path=None):
         for key in c["documents"]:
             if key not in data["documents"]:
                 raise ValueError(f"unknown document key: {key}")
+        for entry in c.get("session_documents") or []:
+            if not isinstance(entry, dict) or not entry.get("file") \
+                    or not isinstance(entry.get("chunks"), list) \
+                    or not entry["chunks"]:
+                raise ValueError(f"bad session_documents: {c['id']}")
+            for chunk in entry["chunks"]:
+                if not isinstance(chunk, dict) or not chunk.get("text"):
+                    raise ValueError(f"bad session chunk: {c['id']}")
+        if c.get("bind") not in (None, "other"):
+            raise ValueError(f"bad bind: {c['id']}")
     return data
 
 
@@ -155,6 +177,9 @@ def check_expectations(answer, sources, info, expect):
     for f in exp.get("must_cite", []):
         if f not in files:
             failures.append(f"missing citation: {f}")
+    for f in exp.get("must_not_cite", []):
+        if f in files:
+            failures.append(f"leaked citation: {f}")
     blob = ((answer or "")
             + " ".join((s or {}).get("content", "") for s in sources)).lower()
     for term in exp.get("must_include_any", []):
@@ -172,20 +197,39 @@ def check_expectations(answer, sources, info, expect):
 
 
 def run_case(case, documents, llm=None, model_key="echo"):
-    """Run one case deterministically. 5C-gated cases are skipped."""
+    """Run one case deterministically.
+
+    Cases with "session_documents" index them under a fresh session id
+    and bind it for retrieval, unless "bind" is "other" (a different
+    fresh id: the cross-session probe). Cases with "requires" stay
+    skipped (future gates).
+    """
     from workflows import query_workflow
     from .metrics import compute
     import config
 
-    if case.get("requires") == "5C":
+    if case.get("requires"):
         return {"id": case["id"], "status": "skipped",
-                "reason": "requires-5C-session-uploads"}
+                "reason": f"requires-{case['requires']}"}
+    import secrets
     docs = []
     for key in case["documents"]:
         for chunk in documents[key]["chunks"]:
             docs.append({"file": documents[key]["file"],
                          "page": chunk.get("page", 0),
                          "text": chunk["text"]})
+    indexing_sid = None
+    bind_sid = None
+    if case.get("session_documents"):
+        indexing_sid = secrets.token_hex(16)
+        for entry in case["session_documents"]:
+            for chunk in entry["chunks"]:
+                docs.append({"file": entry["file"],
+                             "page": chunk.get("page", 0),
+                             "text": chunk["text"],
+                             "scope": "session", "sid": indexing_sid})
+        bind_sid = secrets.token_hex(16) if case.get("bind") == "other" \
+            else indexing_sid
     store = DictStore(docs)
     llm = llm or EchoLLM()
     context = [m for m in (case.get("context") or [])]
@@ -193,7 +237,8 @@ def run_case(case, documents, llm=None, model_key="echo"):
     try:
         answer, sources, info = query_workflow(
             case["query"], config=config.load_config(), vector_store=store,
-            llm_provider=llm, conversation_context=context)
+            llm_provider=llm, conversation_context=context,
+            session_id=bind_sid)
     except Exception as e:  # harness reports, never raises
         return {"id": case["id"], "status": "error", "error": repr(e)[:200]}
     wall_ms = max(0, int((time.monotonic() - t0) * 1000))

@@ -52,3 +52,7 @@ unless noted). The full suite asserts most of these.
 - Session IDs are opaque random 128-bit values; malformed IDs and
   contradictory scope writes fail loudly, never fall back to unscoped
   reads or cross-session access.
+- Session uploads (5C): PDF-only with size/count/byte caps; indexed
+  session-only (never promoted, no scope toggle); browser filenames are
+  display labels, never storage/filesystem identities; document contents
+  never enter metadata-only telemetry; partial states are never ready.

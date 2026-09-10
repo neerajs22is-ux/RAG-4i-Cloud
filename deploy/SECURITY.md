@@ -18,7 +18,9 @@ purpose — a human confirms each item.
 
 - [ ] EC2 uses the least-privilege IAM role (read-only on
       `rag4i-company-documents-305740358559-ap-south-2-an/documents/*`).
-      No `PutObject`/`DeleteObject` unless a write flow was approved.
+      Phase 5C session uploads are the approved write flow: additionally
+      allow `PutObject`/`DeleteObject` ONLY on `sessions/*` in the same
+      bucket (cleanup + retry paths). No other writes.
 - [ ] No AWS access keys anywhere: not in `.env`, not in code, not in git.
 - [ ] `DB_PASSWORD` exists **only** in `/home/ec2-user/RAG-4i-Cloud/.env`
       on the instance (never committed; `.env` is git-ignored).

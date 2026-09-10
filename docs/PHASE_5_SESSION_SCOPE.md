@@ -1,8 +1,9 @@
 # Phase 5 Session Scope Design (metadata contract + lifecycle)
 
 Status: **scope primitives implemented (5B)** in `document_scope.py` +
-both vector providers; session uploads (5C) still pending. Anything
-below marked “NOT implemented” stays that way.
+both vector providers; **session uploads implemented (5C)** in
+`session_uploads.py` + Streamlit UI. Retention cleanup and planner (5D)
+still pending.
 
 ## 1. Metadata contract (additive columns on `chunks`)
 
@@ -57,22 +58,58 @@ upload → validate → indexed → available → detach → retention → delet
 - **delete**: `DELETE WHERE session_id=..` + storage prefix removal;
   backups age out per policy; no orphaned rows/objects.
 
-## 5. Session upload security limits (defined, NOT implemented)
+## 5. Session upload security limits (implemented, 5C)
 
-| Limit | Proposed pilot value | Status |
+| Limit | Pilot value | Status |
 |---|---|---|
-| Allowed types | PDF only (`application/pdf` + magic-byte check) | DECIDED (design) |
-| Max file size | 10 MB | PENDING POLICY |
-| Max files / session | 5 | PENDING POLICY |
-| Max total session storage | 50 MB | PENDING POLICY |
-| Corrupt/invalid PDF | reject with per-file reason (existing report shape) | DECIDED (design) |
-| Password-protected PDF | reject ("encrypted PDFs unsupported") | DECIDED (design) |
-| Upload rate/abuse | per-session cooldown + size quotas; no public endpoint in pilot | PENDING POLICY |
-| Retention window | 24h, then physical delete | PENDING POLICY |
-| Delete semantics | detach instant; physical delete async ≤ retention end | DECIDED (design) |
+| Allowed types | PDF only (extension hint + `%PDF-` magic bytes) | DECIDED (5C) |
+| Max file size | 10 MB (`MAX_FILE_BYTES`) | DECIDED (5C) |
+| Max files / session | 5 (`MAX_FILES_PER_SESSION`) | DECIDED (5C) |
+| Max total session storage | 50 MB (`MAX_SESSION_BYTES`) | DECIDED (5C) |
+| Corrupt/invalid PDF | reject with per-file reason (existing report shape) | DECIDED (5C) |
+| Password-protected PDF | reject ("encrypted PDFs unsupported") | DECIDED (5C) |
+| Upload rate/abuse | per-session quotas above + single-operator pilot; no public endpoint | PENDING POLICY |
+| Retention window | 24h proposal stands; no cleanup job yet (vectors/objects retained) | PENDING POLICY |
+| Delete semantics | detach instant (New Chat rotates the binding); physical delete async ≤ retention end | Delete NOT implemented |
 
 Scanned-image PDFs (no extractable text) already report zero-text
 through the existing diagnostics — session uploads inherit that.
+
+## 7. Phase 5C implementation notes
+
+- **S3 key convention**: `sessions/<session-id>/uploads/<stem>-<sha12>.pdf`
+  at bucket root — deliberately OUTSIDE the persistent corpus prefix so
+  session objects never appear in corpus listings. Stem is a sanitized
+  basename (no paths, bounded charset); the 12-hex content suffix makes
+  keys collision-resistant. Same layout is mirrored for local staging
+  under `SESSION_STORAGE_DIR/<session-id>/uploads/`.
+- **Identity/deduplication**: `document_id = sha1("session-doc:" +
+  session_id + content_sha256 + safe_name)`. Same (session, bytes)
+  re-upload → identical IDs → upsert is a no-op (retry-safe, duplicate
+  shortcut returns `already-indexed`). Different sessions or bytes fork
+  deterministically; persistent path-derived IDs can never collide.
+  No contents in registry/results/telemetry (sizes/hashes/names only).
+- **Ordering** (`ingest_session_upload`): cheap validation (type/magic/
+  size/quota/session) → duplicate shortcut → S3/object write → load via
+  shared `PyPDFLoader` primitive → 1000/200 chunk → MiniLM →
+  `build_index(..., session_id)` → scoped verify (own `document_id`
+  present) → `ready`. Build failures best-effort delete the staged
+  object; verify failures keep it for diagnosis; both report `failed`
+  (never ready) with per-file reasons. No LLM in ingestion.
+- **Lifecycle implemented**: binding minted per browser session
+  (`ensure_session_id`), rebound on snapshot restore (same lineage),
+  rotated on New Chat (detach; vectors kept). Retention/physical
+  deletion: placeholder only (no cleanup job, no expiry scan).
+- **UI**: sidebar “Session documents” (uploader + per-file progress +
+  results + registry list). No scope selector, no storage internals,
+  no session IDs shown. Every question searches persistent + current
+  session automatically; starter cache is session-keyed.
+- **Security assumptions**: browser filenames are labels only; S3 creds
+  stay server-side (instance role); isolation holds even if
+  `session_state`/snapshot JSON is hand-edited (provider-side filter);
+  quota reconciliation counts unknown vector rows at max-file weight;
+  EC2 IAM needs `PutObject`/`DeleteObject` on `sessions/*` (see
+  `deploy/SECURITY.md`; local mode needs nothing new).
 
 ## 6. Migration behavior (implemented, 5B)
 

@@ -41,16 +41,17 @@ class TestBenchmarkFixtures(unittest.TestCase):
             self.assertTrue(c["query"].strip(), c["id"])
             self.assertTrue(c["documents"], c["id"])
 
-    def test_session_cases_are_gated_not_live(self):
+    def test_session_cases_run_live(self):
+        # 5C implemented session uploads: the benchmark session cases run
+        # deterministically (no skip) instead of staying gated.
         from tests.benchmarks.harness import load_cases, run_all
         data = load_cases()
-        gated = [c for c in data["cases"] if c.get("requires") == "5C"]
-        self.assertTrue(gated)
+        self.assertTrue(any("session" in c["id"]
+                            for c in data["cases"]))
         out = run_all()
-        for r in out["results"]:
-            if r["id"] in {c["id"] for c in gated}:
-                self.assertEqual(r["status"], "skipped")
-                self.assertIn("5C", r["reason"])
+        by_id = {r["id"]: r for r in out["results"]}
+        self.assertEqual(by_id["session-upload-basic"]["status"], "pass")
+        self.assertEqual(by_id["session-upload-isolation"]["status"], "pass")
 
 
 class TestHarnessDeterminism(unittest.TestCase):

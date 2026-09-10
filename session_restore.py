@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 SCHEMA_VERSION = 1
 _MAX_MESSAGES = 200
 _ALLOWED_ROLES = ("user", "assistant")
+_MAX_SESSION_DOCS = 10
 
 
 def _utc_now_iso() -> str:
@@ -95,18 +96,69 @@ def _clean_message(msg: dict) -> dict | None:
     return out
 
 
-def serialize_conversation(messages, saved_at: str | None = None) -> dict:
-    """Snapshot the current conversation (pure, no I/O)."""
+def _clean_session_doc(entry: dict | None) -> dict | None:
+    """Keep upload-registry metadata only (never contents, no secrets)."""
+    if not isinstance(entry, dict):
+        return None
+    try:
+        size = max(0, int(entry.get("size_bytes") or 0))
+    except (TypeError, ValueError):
+        size = 0
+    try:
+        chunks = max(0, int(entry.get("chunks_indexed") or 0))
+    except (TypeError, ValueError):
+        chunks = 0
+    out = {
+        "display_name": str(entry.get("display_name") or "")[:120],
+        "safe_name": str(entry.get("safe_name") or "")[:140],
+        "size_bytes": size,
+        "content_sha256": str(entry.get("content_sha256") or "")[:64],
+        "document_id": str(entry.get("document_id") or "")[:64],
+        "status": entry.get("status") if entry.get("status") in (
+            "ready", "failed", "already-indexed") else "failed",
+        "chunks_indexed": chunks,
+        "error": str(entry.get("error") or "")[:300],
+    }
+    return out
+
+
+def _clean_session_block(session) -> dict | None:
+    if not isinstance(session, dict):
+        return None
+    from document_scope import is_valid_session_id
+    sid = session.get("id")
+    if not is_valid_session_id(sid):
+        return None
+    docs = []
+    for entry in (session.get("documents") or [])[:_MAX_SESSION_DOCS]:
+        cleaned = _clean_session_doc(entry)
+        if cleaned is not None:
+            docs.append(cleaned)
+    return {"id": sid, "documents": docs}
+
+
+def serialize_conversation(messages, saved_at: str | None = None,
+                           session=None) -> dict:
+    """Snapshot the current conversation (pure, no I/O).
+
+    session is an optional {"id": session_id, "documents": registry}
+    block rebound on restore so session uploads stay usable after an
+    accidental refresh. Old snapshots without it still load.
+    """
     clean = []
     for m in (messages or [])[-_MAX_MESSAGES:]:
         c = _clean_message(m)
         if c is not None:
             clean.append(c)
-    return {
+    out = {
         "schema": SCHEMA_VERSION,
         "saved_at": saved_at or _utc_now_iso(),
         "messages": clean,
     }
+    block = _clean_session_block(session)
+    if block is not None:
+        out["session"] = block
+    return out
 
 
 def deserialize_conversation(data) -> dict:
@@ -133,7 +185,11 @@ def deserialize_conversation(data) -> dict:
     saved_at = data.get("saved_at")
     if not isinstance(saved_at, str):
         saved_at = None
-    return {"messages": clean, "saved_at": saved_at, "ok": True}
+    out = {"messages": clean, "saved_at": saved_at, "ok": True}
+    block = _clean_session_block(data.get("session"))
+    if block is not None:
+        out["session"] = block
+    return out
 
 
 def should_offer_restore(current_messages, snapshot) -> bool:
@@ -168,6 +224,21 @@ def restore_messages_into_state(state, snapshot) -> int:
     state.pop("last_failed", None)
     state.pop("open_source", None)
     return len(msgs)
+
+
+def restore_session_into_state(state, snapshot) -> bool:
+    """Rebind a validated snapshot session block (same-browser lineage).
+
+    Sets session_id + session_docs so uploads stay usable after an
+    accidental refresh. Returns True when adopted, False otherwise
+    (callers then mint a fresh session). Never touches vectors/config.
+    """
+    block = _clean_session_block((snapshot or {}).get("session"))
+    if block is None:
+        return False
+    state["session_id"] = block["id"]
+    state["session_docs"] = block["documents"]
+    return True
 
 
 def clear_restore_state(state) -> None:

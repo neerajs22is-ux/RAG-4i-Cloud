@@ -39,6 +39,20 @@ local folder | S3 bucket → PyPDFLoader → RecursiveCharacterTextSplitter
   → HuggingFaceEmbeddings → Chroma | pgvector  (per-file on_progress)
 ```
 
+## Session uploads (Phase 5C; same pipeline, session scope)
+```text
+browser file picker → validate (PDF/magic/size/quota/session, cheap first)
+  → store object (S3 sessions/<sid>/uploads/ | local session dir)
+  → PyPDFLoader → 1000/200 → MiniLM → build_index(session_id)
+  → scoped verify → ready (registry + session docs list)
+```
+- Identity: `document_id` is content-bound + session-namespaced
+  (re-upload idempotent, no cross-session/persistent collisions).
+- Retrieval: every question searches persistent + current session via
+  the 5B provider-side filter; starter cache is session-keyed.
+- Lifecycle: binding minted per browser session, rebound on restore,
+  rotated on New Chat (detach; vectors kept, no physical delete yet).
+
 ## Provider boundaries (config-only switching)
 - Document storage: `DOCUMENT_STORAGE=local|s3`
   (`document_storage.py` ↔ `s3_document_storage.py`; boto3 default chain).

@@ -110,6 +110,9 @@ class AppConfig:
     s3_bucket: str = ""
     s3_region: str = "ap-south-2"
     s3_prefix: str = "documents/"
+    # Session uploads (Phase 5C): local staging root for session files.
+    # S3 mode needs no extra path (objects live under sessions/<id>/).
+    session_storage_dir: str = "session_uploads"
 
     def postgres_dsn(self) -> str:
         """Libpq connection string (DATABASE_URL wins if set)."""
@@ -158,6 +161,7 @@ def load_config() -> AppConfig:
         s3_bucket=_get_str("S3_BUCKET", ""),
         s3_region=_get_str("S3_REGION", "ap-south-2"),
         s3_prefix=_get_str("S3_PREFIX", "documents/"),
+        session_storage_dir=_get_str("SESSION_STORAGE_DIR", "session_uploads"),
     )
 
 

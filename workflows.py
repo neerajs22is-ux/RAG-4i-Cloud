@@ -213,9 +213,16 @@ def _detect_fields(t: str):
     return found[:MAX_EXTRACTION_SUBQUERIES]
 
 
-def known_file_names(vector_store, limit: int = 50):
+def known_file_names(vector_store, limit: int = 50, session_id=None):
     """Indexed filenames via the provider abstraction (no model load)."""
     try:
+        return [s.get("file_name") for s in vector_store.list_sources(
+            limit, session_id=session_id) if s.get("file_name")]
+    except TypeError:
+        # Duck-typed stores without scope support: persistent view.
+        if session_id is not None:
+            raise ValueError(
+                "Session-scoped listing needs a scope-aware vector store.")
         return [s.get("file_name") for s in vector_store.list_sources(limit)
                 if s.get("file_name")]
     except Exception as e:
@@ -313,24 +320,31 @@ def _ms(a, b):
 
 
 def retrieve_for_document(topic_query, target_file, config=None,
-                          vector_store=None):
+                          vector_store=None, session_id=None):
     """Evidence scoped to one document: thresholded retrieval filtered to
     the file, topped up with same-file chunks (existing abstraction).
 
-    Returns (evidence: list[structured], retrieval_ms: int).
+    session_id None means persistent-only; a valid id additionally admits
+    that session's rows. Returns (evidence: list[structured], retrieval_ms).
     """
     from backend import _to_structured_source, retrieve_documents
 
     _t0 = time.monotonic()
     hits = retrieve_documents(topic_query, config=config,
-                              vector_store=vector_store)
+                              vector_store=vector_store,
+                              session_id=session_id)
     scoped = [s for s in hits
               if (s.get("file_name") or "").lower()
               == (target_file or "").lower()]
     if vector_store is not None:
         try:
             seen = {s.get("chunk_id") for s in scoped}
-            for doc, _score in vector_store.chunks_for_source(target_file):
+            if session_id is None:
+                pairs = vector_store.chunks_for_source(target_file)
+            else:
+                pairs = vector_store.chunks_for_source(
+                    target_file, session_id=session_id)
+            for doc, _score in pairs:
                 struct = _to_structured_source(doc, None)
                 if struct.get("chunk_id") not in seen:
                     seen.add(struct.get("chunk_id"))
@@ -340,12 +354,17 @@ def retrieve_for_document(topic_query, target_file, config=None,
     return scoped, _ms(_t0, time.monotonic())
 
 
-def summary_chunks(target_file, vector_store, limit=MAX_SUMMARY_CHUNKS):
+def summary_chunks(target_file, vector_store, limit=MAX_SUMMARY_CHUNKS,
+                   session_id=None):
     """Bounded deterministic chunk selection for summaries (no embeddings)."""
     from backend import _to_structured_source
 
     try:
-        pairs = vector_store.chunks_for_source(target_file, limit=limit)
+        if session_id is None:
+            pairs = vector_store.chunks_for_source(target_file, limit=limit)
+        else:
+            pairs = vector_store.chunks_for_source(
+                target_file, limit=limit, session_id=session_id)
     except Exception as e:
         logger.warning("Summary chunk fetch failed for %s: %s",
                        target_file, e)
@@ -447,11 +466,12 @@ def _empty_timings():
 
 def query_workflow(query_text, config=None, vector_store=None,
                    llm_provider=None, conversation_context=None,
-                   known_files=None, on_phase=None):
+                   known_files=None, on_phase=None, session_id=None):
     """Non-streaming workflow runner (tests + compat).
 
     Returns (answer: str, sources: list, info: dict). NORMAL workflow
     delegates to backend.query_documents so ordinary Q&A is unchanged.
+    session_id scopes retrieval (None = persistent-only).
     """
     from backend import query_documents
 
@@ -461,27 +481,31 @@ def query_workflow(query_text, config=None, vector_store=None,
         answer, sources = query_documents(
             query_text, config=config, vector_store=vector_store,
             llm_provider=llm_provider,
-            conversation_context=conversation_context, on_phase=on_phase)
+            conversation_context=conversation_context, on_phase=on_phase,
+            session_id=session_id)
         return answer, sources, {"workflow": NORMAL, "label": None,
                                  "needs_retrieval": True}
     if detected["workflow"] == COMPARISON:
         return _run_comparison(query_text, detected, config, vector_store,
                                llm_provider, known_files, t0, on_phase,
-                               stream=False)
+                               stream=False, session_id=session_id)
     if detected["workflow"] == EXTRACTION:
         return _run_extraction(query_text, detected, config, vector_store,
-                               known_files, t0, on_phase)
+                               known_files, t0, on_phase,
+                               session_id=session_id)
     return _run_summary(query_text, detected, config, vector_store,
-                        llm_provider, known_files, t0, on_phase, stream=False)
+                        llm_provider, known_files, t0, on_phase,
+                        stream=False, session_id=session_id)
 
 
 def stream_workflow_answer(query_text, config=None, vector_store=None,
                            llm_provider=None, conversation_context=None,
-                           known_files=None, on_phase=None):
+                           known_files=None, on_phase=None, session_id=None):
     """Streaming workflow entry (UI). Same (info, stream) shape as
     backend.stream_answer plus workflow/label/fallback keys.
 
     NORMAL delegates to backend.stream_answer untouched.
+    session_id scopes retrieval (None = persistent-only).
     """
     from backend import stream_answer
 
@@ -490,7 +514,8 @@ def stream_workflow_answer(query_text, config=None, vector_store=None,
         info, stream = stream_answer(
             query_text, config=config, vector_store=vector_store,
             llm_provider=llm_provider,
-            conversation_context=conversation_context, on_phase=on_phase)
+            conversation_context=conversation_context, on_phase=on_phase,
+            session_id=session_id)
         info["workflow"] = NORMAL
         info["label"] = None
         info["fallback_template"] = None
@@ -499,14 +524,14 @@ def stream_workflow_answer(query_text, config=None, vector_store=None,
     if detected["workflow"] == COMPARISON:
         return _run_comparison(query_text, detected, config, vector_store,
                                llm_provider, known_files, time.monotonic(),
-                               on_phase, stream=True)
+                               on_phase, stream=True, session_id=session_id)
     if detected["workflow"] == EXTRACTION:
         return _run_extraction(query_text, detected, config, vector_store,
                                known_files, time.monotonic(), on_phase,
-                               stream=True)
+                               stream=True, session_id=session_id)
     return _run_summary(query_text, detected, config, vector_store,
                         llm_provider, known_files, time.monotonic(),
-                        on_phase, stream=True)
+                        on_phase, stream=True, session_id=session_id)
 
 
 def _resolve_store(config, vector_store):
@@ -523,7 +548,8 @@ def _resolve_store(config, vector_store):
 
 
 def _run_comparison(query_text, detected, config, vector_store,
-                    llm_provider, known_files, t0, on_phase, stream):
+                    llm_provider, known_files, t0, on_phase, stream,
+                    session_id=None):
     from answer_support import UNSUPPORTED, assess_support
     from backend import LOW_RELEVANCE_MESSAGE
     from llm_provider import get_llm_provider
@@ -535,7 +561,7 @@ def _run_comparison(query_text, detected, config, vector_store,
         cfg = get_config()
     vs = _resolve_store(cfg, vector_store)
     if known_files is None:
-        known_files = known_file_names(vs)
+        known_files = known_file_names(vs, session_id=session_id)
     if on_phase is not None:
         on_phase("retrieving")
     _s0 = time.monotonic()
@@ -564,9 +590,9 @@ def _run_comparison(query_text, detected, config, vector_store,
     targets = resolved["targets"]
     file_a, file_b = targets[0], targets[1]
     ev_a, ms_a = retrieve_for_document(query_text, file_a, config=cfg,
-                                       vector_store=vs)
+                                       vector_store=vs, session_id=session_id)
     ev_b, ms_b = retrieve_for_document(query_text, file_b, config=cfg,
-                                       vector_store=vs)
+                                       vector_store=vs, session_id=session_id)
     retrieval_ms = ms_a + ms_b
     sources = list(ev_a) + list(ev_b)
     if not sources:
@@ -631,7 +657,8 @@ def _run_comparison(query_text, detected, config, vector_store,
 
 
 def _run_extraction(query_text, detected, config, vector_store,
-                    known_files, t0, on_phase, stream=False):
+                    known_files, t0, on_phase, stream=False,
+                    session_id=None):
     from backend import LOW_RELEVANCE_MESSAGE
 
     cfg = config
@@ -653,8 +680,9 @@ def _run_extraction(query_text, detected, config, vector_store,
     best, retrieval_ms = {}, 0
     for q in subqueries[:MAX_EXTRACTION_SUBQUERIES]:
         hits, ms = retrieve_for_document(q, scoped[0], config=cfg,
-                                         vector_store=vs) if scoped else \
-            _retrieve_all(q, cfg, vs)
+                                         vector_store=vs,
+                                         session_id=session_id) if scoped else \
+            _retrieve_all(q, cfg, vs, session_id=session_id)
         retrieval_ms += ms
         for s in hits:
             cid = s.get("chunk_id") or id(s)
@@ -695,13 +723,14 @@ def _run_extraction(query_text, detected, config, vector_store,
     return _wrap(info, stream)
 
 
-def _retrieve_all(query_text, cfg, vs):
+def _retrieve_all(query_text, cfg, vs, session_id=None):
     """Unscoped retrieval with timing (extraction base query)."""
     from backend import retrieve_documents
 
     _t0 = time.monotonic()
     try:
-        hits = retrieve_documents(query_text, config=cfg, vector_store=vs)
+        hits = retrieve_documents(query_text, config=cfg, vector_store=vs,
+                                  session_id=session_id)
     except Exception as e:
         logger.warning("Retrieval failed: %s", e)
         return [], _ms(_t0, time.monotonic())
@@ -709,7 +738,8 @@ def _retrieve_all(query_text, cfg, vs):
 
 
 def _run_summary(query_text, detected, config, vector_store,
-                 llm_provider, known_files, t0, on_phase, stream):
+                 llm_provider, known_files, t0, on_phase, stream,
+                 session_id=None):
     from llm_provider import get_llm_provider
 
     cfg = config
@@ -718,7 +748,7 @@ def _run_summary(query_text, detected, config, vector_store,
         cfg = get_config()
     vs = _resolve_store(cfg, vector_store)
     if known_files is None:
-        known_files = known_file_names(vs)
+        known_files = known_file_names(vs, session_id=session_id)
     if on_phase is not None:
         on_phase("retrieving")
     _s0 = time.monotonic()
@@ -736,7 +766,7 @@ def _run_summary(query_text, detected, config, vector_store,
                 "fallback_template": None, "fallback_question": query_text}
         return _wrap(info, stream)
     target = resolved["target"]
-    chunks = summary_chunks(target, vs)
+    chunks = summary_chunks(target, vs, session_id=session_id)
     if not chunks:
         timings = {"retrieval_ms": 0, "support_ms": support_ms,
                    "preparation_ms": _ms(t0, time.monotonic()),

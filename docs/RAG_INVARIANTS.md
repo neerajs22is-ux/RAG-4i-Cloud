@@ -46,3 +46,9 @@ unless noted). The full suite asserts most of these.
 - `REASONING_ENABLED=0` must preserve the 4.12 path exactly.
 - Persistent/session corpora cannot silently merge at storage level
   (scope columns + filtered reads in both providers).
+- Legacy (pre-scope) rows map deterministically to persistent scope
+  (pg column defaults; Chroma metadata backfill); chunk_id derivation
+  excludes scope, so re-indexing never duplicates.
+- Session IDs are opaque random 128-bit values; malformed IDs and
+  contradictory scope writes fail loudly, never fall back to unscoped
+  reads or cross-session access.

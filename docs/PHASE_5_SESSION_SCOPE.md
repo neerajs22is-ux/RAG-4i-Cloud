@@ -1,6 +1,8 @@
 # Phase 5 Session Scope Design (metadata contract + lifecycle)
 
-Design only — no upload code in 5.0.
+Status: **scope primitives implemented (5B)** in `document_scope.py` +
+both vector providers; session uploads (5C) still pending. Anything
+below marked “NOT implemented” stays that way.
 
 ## 1. Metadata contract (additive columns on `chunks`)
 
@@ -8,9 +10,9 @@ Design only — no upload code in 5.0.
 |---|---|---|
 | `scope` | `'persistent'` | `'session'` |
 | `session_id` | `NULL` | opaque 128-bit id (hex, `secrets.token_hex(16)`) |
-| `document_id` | content-derived (5B changes derivation, additive migration) | same derivation |
-| `chunk_id` | unchanged content-hash IDs | unchanged |
-| `content_hash` | NEW: sha256 of normalized chunk text (dedupe + audit) | same |
+| `document_id` | path-derived, unchanged in 5B (content-derived move deferred, see §6) | same derivation |
+| `chunk_id` | unchanged content-hash IDs (scope excluded from derivation) | unchanged |
+| `content_hash` | deferred to 5C (dedupe matters at upload time) | deferred |
 
 Chroma: same keys in metadata dicts. Both providers, same rule
 (parity, as today).
@@ -71,3 +73,25 @@ upload → validate → indexed → available → detach → retention → delet
 
 Scanned-image PDFs (no extractable text) already report zero-text
 through the existing diagnostics — session uploads inherit that.
+
+## 6. Migration behavior (implemented, 5B)
+
+- PostgreSQL: `ensure_schema()` runs `ADD COLUMN IF NOT EXISTS` for
+  `scope` (`DEFAULT 'persistent'`, which backfills existing rows) and
+  `session_id`. Fresh tables include both columns. Reads retry once
+  after migrating on pre-scope tables (`42703`). Existing rows map
+  deterministically to persistent; nothing is deleted or re-embedded.
+- Chroma: writes stamp scope since 5B; reads run a one-time,
+  metadata-only backfill (missing/invalid scope → `persistent`,
+  stray `session_id` dropped, session rows untouched, all logged).
+  If the backfill fails, unbound reads degrade to the exact 4.12
+  unfiltered behavior (logged) while session-bound reads refuse
+  loudly — never silent, never leaking.
+- `chunk_id` derivation excludes scope, so re-indexing never
+  duplicates; note: re-indexing byte-identical content under a
+  session re-scopes those chunk IDs (upsert semantics) instead of
+  forking them — deterministic, no duplicates.
+- New Chat stays logical DETACH: it clears conversation state only and
+  never deletes vectors; dropping the session binding hides session
+  rows instantly. Physical retention/deletion is 5C work (NOT
+  implemented).

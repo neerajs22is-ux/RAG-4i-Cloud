@@ -166,16 +166,16 @@ class TestPhase50Invariants(unittest.TestCase):
         self.assertEqual(out, "", f"cloud provider already wired: {out}")
 
     def test_frozen_pipeline_files_untouched_by_50(self):
-        # 5.0 changes nothing; 5A extends ONLY the approved seams:
-        # config keys (ANSWER_MODEL_ID/BEDROCK_REGION), the LLM factory
-        # dispatch, and the provider error-message hook. Routing, support,
-        # and workflow semantics stay byte-untouched (their frozen aspects
-        # are asserted by the prompt/threshold/routing suites).
+        # 5.0 changes nothing; 5A extends the LLM factory/config seam and
+        # 5B threads an optional session_id through the retrieval path
+        # (backend + workflows forwarding only). Routing, support, and
+        # workflow semantics stay byte-untouched (their frozen aspects
+        # are asserted by the prompt/threshold/routing/detection suites).
         import subprocess
         out = subprocess.check_output(
             ["git", "status", "--porcelain=v1", "--",
              "query_router.py", "answer_support.py",
-             "workflows.py", "embeddings.py"],
+             "embeddings.py"],
             cwd=ROOT).decode("utf-8").strip()
         self.assertEqual(out, "", f"pipeline files touched: {out}")
 

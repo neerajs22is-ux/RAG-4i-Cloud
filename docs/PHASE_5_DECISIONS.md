@@ -13,6 +13,19 @@
 - No server-side chat history in Phase 5 scope (chat-history ADR stands).
 - No embedding replacement, no HNSW migration, no global RAG rewrite.
 
+## DECIDED (5B)
+
+- Scope primitives implemented; session uploads (5C) still pending.
+- `document_id` stays path-derived in 5B (content-derived move
+  deferred: changing identity now would break delete flows and
+  existing IDs for zero 5B benefit).
+- `content_hash` column deferred to 5C (matters at upload/dedupe time).
+- Legacy mapping: pg `DEFAULT 'persistent'` + retry-once; Chroma
+  metadata-only backfill; unbound reads degrade to 4.12 behavior
+  (logged) instead of hiding data if backfill fails.
+- Re-indexing identical content under a session re-scopes those chunk
+  IDs via upsert (deterministic, no duplicates) rather than forking.
+
 ## PENDING BENCHMARK
 
 - Cloud provider final confirmation (Bedrock vs fallback).

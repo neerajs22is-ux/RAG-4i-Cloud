@@ -11,15 +11,21 @@ from typing import List, Tuple
 
 
 class VectorStore(ABC):
-    """Provider-level operations (pgvector-ready interface, Chroma now)."""
+    """Provider-level operations (pgvector-ready interface, Chroma now).
+
+    Scope (Phase 5B): read/write methods accept an optional session_id.
+    None means persistent-only; a valid opaque id adds that session's
+    rows (persistent OR session). Malformed IDs raise ValueError; reads
+    never return another session's rows.
+    """
 
     @abstractmethod
-    def build_index(self, chunks) -> int:
+    def build_index(self, chunks, session_id=None) -> int:
         """Add chunks to the index without destroying existing data."""
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, k: int = 5):
+    def search(self, query: str, k: int = 5, session_id=None):
         """Return list of (Document, score) tuples."""
         raise NotImplementedError
 
@@ -27,7 +33,7 @@ class VectorStore(ABC):
     def get_status(self) -> dict:
         raise NotImplementedError
 
-    def list_sources(self, limit: int = 50):
+    def list_sources(self, limit: int = 50, session_id=None):
         """Distinct source filenames in the index (for suggestions).
 
         Default implementation reports unknown (providers override).
@@ -39,7 +45,8 @@ class VectorStore(ABC):
         """Remove a document's chunks. Default: unsupported (0 removed)."""
         return 0
 
-    def chunks_for_source(self, file_name: str, limit: int = 8):
+    def chunks_for_source(self, file_name: str, limit: int = 8,
+                          session_id=None):
         """Same-file chunks as admissible file evidence for overviews.
 
         Default: none (providers override). Returns [(doc, None)] with
@@ -54,6 +61,26 @@ class VectorStore(ABC):
             return False
 
 
+def _scope_where(session_id=None):
+    """Chroma metadata filter for a read. None -> persistent-only.
+
+    Raises ValueError on malformed session IDs (loud, never a silent
+    unscoped read).
+    """
+    if session_id is None:
+        return {"scope": "persistent"}
+    from document_scope import SESSION, validate_session_id
+    sid = validate_session_id(session_id)
+    return {"$or": [{"scope": "persistent"},
+                    {"$and": [{"scope": SESSION},
+                              {"session_id": sid}]}]}
+
+
+# Persist directories whose legacy rows were already normalized to
+# scope="persistent" in this process (backfill is idempotent anyway).
+_backfilled_dirs = set()
+
+
 class ChromaVectorStore(VectorStore):
     """Chroma implementation. Never deletes the existing database."""
 
@@ -62,7 +89,6 @@ class ChromaVectorStore(VectorStore):
         self.persist_directory = os.path.abspath(persist_directory)
         self._provider = embedding_provider
         self._embedding_function = embedding_function
-
     def _embedding(self):
         if self._embedding_function is not None:
             return self._embedding_function
@@ -98,13 +124,34 @@ class ChromaVectorStore(VectorStore):
             ids.append(hashlib.sha1(str(key).encode("utf-8")).hexdigest())
         return ids
 
-    def build_index(self, chunks) -> int:
-        """Add chunks idempotently (same content -> same IDs, upserted)."""
+    def build_index(self, chunks, session_id=None) -> int:
+        """Add chunks idempotently (same content -> same IDs, upserted).
+
+        Scope is stamped from session_id (None = persistent) via
+        document_scope.resolve_chunk_scope: contradictory or session-less
+        session writes raise ValueError. chunk_id derivation excludes
+        scope, so re-indexing never duplicates.
+        """
         from langchain_community.vectorstores import Chroma
+
+        from document_scope import resolve_chunk_scope
 
         chunks = list(chunks or [])
         if not chunks:
             return 0
+        stamped = []
+        for chunk in chunks:
+            scope, sid = resolve_chunk_scope(
+                getattr(chunk, "metadata", {}) or {}, session_id)
+            meta = dict(getattr(chunk, "metadata", {}) or {})
+            meta["scope"] = scope
+            if sid is None:
+                meta.pop("session_id", None)
+            else:
+                meta["session_id"] = sid
+            chunk.metadata = meta
+            stamped.append(chunk)
+        chunks = stamped
         ids = self._chunk_ids(chunks)
         if os.path.isdir(self.persist_directory) and os.listdir(self.persist_directory):
             db = self._load_existing()
@@ -135,9 +182,93 @@ class ChromaVectorStore(VectorStore):
         except Exception:
             return 0
 
-    def search(self, query: str, k: int = 5):
+    def _ensure_persistent_scope(self, db) -> bool:
+        """Normalize legacy rows (missing/invalid scope) to persistent.
+
+        Chroma metadata filters cannot match missing keys, so pre-scope
+        rows would vanish from filtered reads. This metadata-only backfill
+        (no vectors touched) maps them deterministically to persistent
+        scope; session rows are never altered. Runs once per directory
+        per process; True on success (or nothing to do).
+        """
+        if self.persist_directory in _backfilled_dirs:
+            return True
+        import logging
+
+        try:
+            try:
+                got = db._collection.get(include=["metadatas"])
+            except Exception:
+                got = db.get(include=["metadatas"])
+            if not isinstance(got, dict):
+                _backfilled_dirs.add(self.persist_directory)
+                return True
+            ids = got.get("ids", []) or []
+            metas = got.get("metadatas", []) or []
+            fix_ids, fix_metas = [], []
+            dropped_sids = 0
+            for i, m in zip(ids, metas):
+                if not isinstance(m, dict):
+                    continue
+                scope = m.get("scope")
+                sid = m.get("session_id")
+                if scope == "persistent" and not sid:
+                    continue
+                if scope == "session" and isinstance(sid, str) and sid:
+                    from document_scope import is_valid_session_id
+                    if is_valid_session_id(sid):
+                        continue
+                clean = {k: v for k, v in m.items() if k != "session_id"}
+                clean["scope"] = "persistent"
+                if "session_id" in m:
+                    dropped_sids += 1
+                fix_ids.append(i)
+                fix_metas.append(clean)
+            if fix_ids:
+                db._collection.update(ids=list(fix_ids), metadatas=fix_metas)
+                logging.getLogger(__name__).info(
+                    "scope backfill: %d rows normalized to persistent "
+                    "(%d stray session_id dropped) in %s",
+                    len(fix_ids), dropped_sids, self.persist_directory)
+            _backfilled_dirs.add(self.persist_directory)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Scope backfill failed for %s: %s",
+                self.persist_directory, e)
+            return False
+
+    def _scope_filter(self, db, session_id=None):
+        """Where-clause for a scoped read, or None for legacy fallback.
+
+        Raises RuntimeError for session-bound reads when the backfill
+        failed (refusing to filter un-migrated data rather than leaking
+        or hiding rows). Unbound reads degrade to the exact 4.12
+        unfiltered behavior with a warning.
+        """
+        import logging
+
+        if self._ensure_persistent_scope(db):
+            return _scope_where(session_id)
+        if session_id is not None:
+            raise RuntimeError(
+                "Cannot run session-scoped search: scope metadata backfill "
+                f"failed for {self.persist_directory}.")
+        logging.getLogger(__name__).warning(
+            "Scope backfill failed for %s; using legacy unfiltered read.",
+            self.persist_directory)
+        return None
+
+    def search(self, query: str, k: int = 5, session_id=None):
+        from document_scope import validate_session_id
+        if session_id is not None:
+            validate_session_id(session_id)
         db = self._load_existing()
-        return db.similarity_search_with_relevance_scores(query, k=k)
+        where = self._scope_filter(db, session_id)
+        if where is None:
+            return db.similarity_search_with_relevance_scores(query, k=k)
+        return db.similarity_search_with_relevance_scores(
+            query, k=k, filter=where)
 
     def get_status(self) -> dict:
         exists = os.path.isdir(self.persist_directory) and bool(
@@ -208,21 +339,30 @@ class ChromaVectorStore(VectorStore):
             status["error"] = error
         return status
 
-    def list_sources(self, limit: int = 50):
+    def list_sources(self, limit: int = 50, session_id=None):
         """Distinct sources (best-effort; [] when unavailable).
 
         Returns [{"file_name": str, "document_id": str|None}] — the
-        document_id powers the delete flow.
+        document_id powers the delete flow. Unbound reads see persistent
+        sources only; bound reads add the current session's sources.
         """
+        if session_id is not None:
+            from document_scope import validate_session_id
+            validate_session_id(session_id)
         try:
             db = self._load_existing()
+            where = self._scope_filter(db, session_id)
             try:
-                got = db.get(limit=limit)
+                got = db.get(where=where, limit=limit) if where is not None \
+                    else db.get(limit=limit)
                 metadatas = got.get("metadatas") if isinstance(got, dict) else None
             except Exception:
                 metadatas = None
             if metadatas is None:
-                got = db._collection.get(limit=limit, include=["metadatas"])
+                kwargs = {"limit": limit, "include": ["metadatas"]}
+                if where is not None:
+                    kwargs["where"] = where
+                got = db._collection.get(**kwargs)
                 metadatas = got.get("metadatas") if isinstance(got, dict) else []
             seen = {}
             for m in metadatas or []:
@@ -234,15 +374,23 @@ class ChromaVectorStore(VectorStore):
         except Exception:
             return []
 
-    def chunks_for_source(self, file_name: str, limit: int = 8):
+    def chunks_for_source(self, file_name: str, limit: int = 8,
+                            session_id=None):
         """Same-file chunks (best-effort; [] when unavailable)."""
         from langchain_core.documents import Document
 
+        if session_id is not None:
+            from document_scope import validate_session_id
+            validate_session_id(session_id)
         try:
             db = self._load_existing()
+            base = self._scope_filter(db, session_id)
+            if base is None:
+                where = {"file_name": file_name}
+            else:
+                where = {"$and": [{"file_name": file_name}, base]}
             try:
-                got = db.get(where={"file_name": file_name},
-                             limit=limit)
+                got = db.get(where=where, limit=limit)
                 docs = got.get("documents") if isinstance(got, dict) else None
                 metas = got.get("metadatas") if isinstance(got, dict) else None
             except Exception:

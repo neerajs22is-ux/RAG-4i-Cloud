@@ -48,6 +48,19 @@ local folder | S3 bucket → PyPDFLoader → RecursiveCharacterTextSplitter
 - Embeddings: `embeddings.py` (shared per-model process cache).
 - LLM: `llm_provider.py` (`generate` + `generate_stream`, same chain/config).
 
+## Scope layer (Phase 5B; no UI session yet)
+- `document_scope.py` (pure): opaque 128-bit session IDs, validation,
+  per-chunk scope resolution. All rejections are loud `ValueError`s.
+- Every chunk carries `scope`/`session_id` (`persistent`/NULL default).
+  Retrieval takes an optional `session_id` (None = persistent-only);
+  providers filter server-side with one isolation rule
+  (`persistent OR (session AND current_session_id)`).
+- Migration is additive: pg defaults + retry-once on pre-scope tables;
+  Chroma metadata-only backfill of legacy rows to persistent.
+- `backend.retrieve_documents` / `query_documents` / `stream_answer` /
+  `preview_answer` and the `workflows.py` runners accept and forward an
+  optional `session_id`; the UI binds none, so 4.12 behavior is unchanged.
+
 ## UI layering (`app.py` + `ui/`)
 - `ui/tokens.py` + `ui/css/` (variables-first styling, OS dark-mode default).
 - `ui/components.py` (pure helpers: labels, sources, copy, export, strength).

@@ -292,15 +292,22 @@ def build_query_forms(query_text: str):
 
 
 def retrieve_documents(query_text, config=None, vector_store=None, k=None,
-                       threshold=None):
+                       threshold=None, session_id=None):
     """Search the vector store; return structured sources (filtered by threshold).
 
     Tries each deterministic query form and keeps each chunk's best score
     (max-pooling), then applies the unchanged top-k/threshold rule.
+    session_id None means persistent-only; a valid opaque id additionally
+    admits that session's rows (never another session's). Malformed IDs
+    raise ValueError. The store is called without the kwarg when unbound
+    so duck-typed stores keep working.
     """
+    from document_scope import validate_session_id
     from embeddings import get_embedding_provider
     from vector_store import get_vector_store
 
+    if session_id is not None:
+        validate_session_id(session_id)
     cfg = config or get_config()
     top_k = k if k is not None else getattr(cfg, "retrieval_k", 5)
     thresh = threshold if threshold is not None else getattr(cfg, "relevance_threshold", 0.3)
@@ -313,7 +320,11 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
     best = {}
     order = []
     for form in build_query_forms(query_text):
-        for doc, score in vector_store.search(form, k=top_k):
+        if session_id is None:
+            hits = vector_store.search(form, k=top_k)
+        else:
+            hits = vector_store.search(form, k=top_k, session_id=session_id)
+        for doc, score in hits:
             try:
                 s = float(score)
             except (TypeError, ValueError):
@@ -373,7 +384,8 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
 
 
 def query_documents(query_text, config=None, vector_store=None, llm_provider=None,
-                    conversation_context=None, on_phase=None):
+                    conversation_context=None, on_phase=None,
+                    session_id=None):
     """Combined retrieve + generate (kept for UI compat).
 
     The intent observer routes first: conversation/capability/out-of-scope
@@ -384,6 +396,9 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     on_phase(name) is an optional progress hook ("retrieving" /
     "generating") for honest staged loading states. It never changes
     behavior and defaults to off.
+
+    session_id scopes retrieval (None = persistent-only). Malformed IDs
+    raise ValueError.
     """
     from query_router import (CAPABILITY, CONVERSATION, DOCUMENT_FOLLOWUP,
                               OUT_OF_SCOPE, expand_followup_query,
@@ -396,7 +411,7 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     _t0 = time.monotonic()
     prepared = _prepare_generation(query_text, cfg, vector_store,
                                    llm_provider, conversation_context,
-                                   obs, on_phase)
+                                   obs, on_phase, session_id)
     _prep_timings = prepared.get("timings", {})
     if prepared["failed"]:
         logger.info("query answered in %.2fs (sources=%d, route=%s "
@@ -443,7 +458,8 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
 
 
 def _prepare_generation(query_text, cfg, vector_store, llm_provider,
-                        conversation_context, obs, on_phase=None):
+                        conversation_context, obs, on_phase=None,
+                        session_id=None):
     """Shared preparation for streaming and non-streaming generation.
 
     Runs routing (already done by caller), retrieval (exactly once),
@@ -457,16 +473,23 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     Timings (real monotonic-clock measurements, no behaviour change):
       timings = {"retrieval_ms": int, "support_ms": int,
                  "preparation_ms": int} on every return path.
+
+    session_id scopes retrieval (None = persistent-only). Malformed IDs
+    raise ValueError here, before any retrieval work.
     """
     from answer_support import (DIRECT, PARTIAL, UNSUPPORTED,
                                 assess_support, build_clarification,
                                 detect_broad_scope,
                                 resolve_effective_question,
                                 unsupported_reply)
+    from document_scope import validate_session_id
     from embeddings import get_embedding_provider
     from llm_provider import get_llm_provider
     from query_router import DOCUMENT_FOLLOWUP, expand_followup_query
     from vector_store import get_vector_store
+
+    if session_id is not None:
+        validate_session_id(session_id)
 
     def _ms(a, b):
         try:
@@ -492,7 +515,8 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     _r0 = time.monotonic()
     try:
         retrieved = retrieve_documents(
-            retrieval_query, config=cfg, vector_store=vector_store
+            retrieval_query, config=cfg, vector_store=vector_store,
+            session_id=session_id,
         )
         if broad and target_file:
             # Source-aware top-up: same-file chunks as admissible file
@@ -500,7 +524,11 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
             # Degrades to retrieval-only if the provider top-up fails.
             similar = len(retrieved)
             try:
-                top_up = vector_store.chunks_for_source(target_file)
+                if session_id is None:
+                    top_up = vector_store.chunks_for_source(target_file)
+                else:
+                    top_up = vector_store.chunks_for_source(
+                        target_file, session_id=session_id)
             except Exception as e:
                 logger.warning("Source top-up failed for %s: %s",
                                target_file, e)
@@ -563,13 +591,14 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
 
 
 def preview_answer(query_text, config=None, vector_store=None,
-                   conversation_context=None):
+                   conversation_context=None, session_id=None):
     """Decide whether a question would reach generation (no LLM call).
 
     Runs the exact preparation stream_answer uses (routing, broad-scope
     top-up, support assessment) and reports whether a generated answer
     would follow. Used to validate suggested questions before showing
     them. Returns {"will_generate": bool, "reason": str}.
+    session_id scopes retrieval (None = persistent-only).
     """
     from query_router import (CAPABILITY, CONVERSATION,
                               OUT_OF_SCOPE, observe_query)
@@ -580,7 +609,8 @@ def preview_answer(query_text, config=None, vector_store=None,
         return {"will_generate": False,
                 "reason": "routed reply, no generation"}
     prepared = _prepare_generation(query_text, cfg, vector_store, None,
-                                   conversation_context, obs)
+                                   conversation_context, obs,
+                                   session_id=session_id)
     if prepared["failed"]:
         return {"will_generate": False, "reason": "retrieval unavailable"}
     if prepared["answer"] is not None:
@@ -591,7 +621,7 @@ def preview_answer(query_text, config=None, vector_store=None,
 
 def stream_answer(query_text, config=None, vector_store=None,
                   llm_provider=None, conversation_context=None,
-                  on_phase=None):
+                  on_phase=None, session_id=None):
     """Streaming answer with synchronous preparation metadata.
 
     Runs routing/retrieval/assessment exactly once (same evidence and
@@ -602,6 +632,7 @@ def stream_answer(query_text, config=None, vector_store=None,
     assembles the final text and applies the empty-response guard.
     On generation failure the stream raises so the caller can fall back
     cleanly (reusing info["retrieved"], never re-retrieving).
+    session_id scopes retrieval (None = persistent-only).
     """
     from output_safety import ThinkStreamSanitizer
 
@@ -621,7 +652,7 @@ def stream_answer(query_text, config=None, vector_store=None,
 
     prepared = _prepare_generation(query_text, cfg, vector_store,
                                    llm_provider, conversation_context,
-                                   obs, on_phase)
+                                   obs, on_phase, session_id)
     info = {"answer": prepared["answer"],
             "retrieved": prepared["retrieved"],
             "needs_retrieval": True,

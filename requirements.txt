@@ -1,6 +1,7 @@
 langchain
 langchain-community
 langchain-openai
+langchain-aws
 chromadb
 sentence-transformers
 pypdf

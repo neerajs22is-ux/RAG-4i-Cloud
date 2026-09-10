@@ -19,6 +19,34 @@ class Doc:
         self.id = None
 
 
+def live_bedrock_llm():
+    """Bedrock answer provider for live benchmark comparison, or None.
+
+    Enabled ONLY with BENCHMARK_LIVE_BEDROCK=1 plus a valid bedrock
+    configuration (LLM_PROVIDER=bedrock, ANSWER_MODEL_ID set). The normal
+    suite never enables it: no live AWS calls, no credentials needed.
+    Callers pass the result as run_all(llm=...) with an explicit
+    model_key (e.g. "sonnet-4.6") for cost math.
+    """
+    if os.environ.get("BENCHMARK_LIVE_BEDROCK") != "1":
+        return None
+    import config as config_mod
+    from bedrock_provider import BedrockConverseProvider
+
+    cfg = config_mod.load_config()
+    if (getattr(cfg, "llm_provider", "") or "").lower() != "bedrock":
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 requires LLM_PROVIDER=bedrock.")
+    if not (getattr(cfg, "answer_model_id", "") or "").strip():
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 requires ANSWER_MODEL_ID.")
+    return BedrockConverseProvider(
+        model_id=cfg.answer_model_id,
+        region=cfg.bedrock_region,
+        temperature=cfg.llm_temperature,
+    )
+
+
 class DictStore:
     """Deterministic word-overlap store (no embeddings, no network)."""
 

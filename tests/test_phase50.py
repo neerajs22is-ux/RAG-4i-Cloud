@@ -166,13 +166,16 @@ class TestPhase50Invariants(unittest.TestCase):
         self.assertEqual(out, "", f"cloud provider already wired: {out}")
 
     def test_frozen_pipeline_files_untouched_by_50(self):
-        # 5.0 adds docs/scaffold only: backend/prompts/router/support stay
-        # exactly as the 4.12 baseline tree has them (checked vs HEAD).
+        # 5.0 changes nothing; 5A extends ONLY the approved seams:
+        # config keys (ANSWER_MODEL_ID/BEDROCK_REGION), the LLM factory
+        # dispatch, and the provider error-message hook. Routing, support,
+        # and workflow semantics stay byte-untouched (their frozen aspects
+        # are asserted by the prompt/threshold/routing suites).
         import subprocess
         out = subprocess.check_output(
             ["git", "status", "--porcelain=v1", "--",
-             "backend.py", "query_router.py", "answer_support.py",
-             "workflows.py", "config.py", "llm_provider.py"],
+             "query_router.py", "answer_support.py",
+             "workflows.py", "embeddings.py"],
             cwd=ROOT).decode("utf-8").strip()
         self.assertEqual(out, "", f"pipeline files touched: {out}")
 

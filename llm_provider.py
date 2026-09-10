@@ -96,9 +96,41 @@ class LMStudioProvider(LLMProvider):
                 continue
         return False
 
+    def offline_message(self, config=None, err=None) -> str:
+        """User-safe failure guidance. Kept byte-identical to the historic
+        backend wording so the lmstudio path behaviour never changes."""
+        base = "http://localhost:1234/v1"
+        if config is not None:
+            base = getattr(config, "llm_base_url", base)
+        return ("LLM endpoint is unreachable. Make sure LM Studio Server "
+                f"is running at {base}.")
+
 
 def get_llm_provider(config=None) -> LLMProvider:
-    """Factory (lmstudio only in Phase 1)."""
+    """Factory dispatching on config (lmstudio default; bedrock opt-in).
+
+    Unknown LLM_PROVIDER values raise loudly: providers are never
+    substituted silently.
+    """
+    name = "lmstudio"
+    if config is not None:
+        name = (getattr(config, "llm_provider", name) or name).lower()
+    if name == "bedrock":
+        from bedrock_provider import BedrockConverseProvider
+
+        return BedrockConverseProvider(
+            model_id=getattr(config, "answer_model_id", "") if config is not None else "",
+            region=getattr(config, "bedrock_region", "us-east-1") if config is not None else "us-east-1",
+            temperature=getattr(config, "llm_temperature", 0.0) if config is not None else 0.0,
+        )
+    if name == "lmstudio":
+        return _lmstudio_provider(config)
+    raise ValueError(
+        f"Unknown LLM_PROVIDER: {name!r} (expected 'lmstudio' or 'bedrock').")
+
+
+def _lmstudio_provider(config=None) -> LLMProvider:
+    """Original LM Studio construction (unchanged defaults)."""
     base_url = "http://localhost:1234/v1"
     api_key = "lm-studio"
     model = "local-model"

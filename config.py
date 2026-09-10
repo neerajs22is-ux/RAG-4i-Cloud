@@ -8,6 +8,10 @@ Required keys (see `.env.example`):
     APP_ENV, VECTOR_STORE, CHROMA_PATH, EMBEDDING_MODEL,
     LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE
 
+Cloud answer LLM (Phase 5A, opt-in; used only when LLM_PROVIDER=bedrock):
+    ANSWER_MODEL_ID (Bedrock model or inference-profile ID; required,
+    no silent default), BEDROCK_REGION (default us-east-1, in-region)
+
 PostgreSQL (Phase 2, optional; used only when VECTOR_STORE=postgres):
     DATABASE_URL (takes precedence if set) or
     DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
@@ -83,6 +87,11 @@ class AppConfig:
     llm_api_key: str = "lm-studio"
     llm_model: str = "local-model"
     llm_temperature: float = 0.0
+    # Cloud answer LLM (Phase 5A). Independent from LLM_MODEL (LM Studio):
+    # bedrock uses answer_model_id; credentials always come from the AWS
+    # runtime chain, never from config (there is no key setting on purpose).
+    answer_model_id: str = ""
+    bedrock_region: str = "us-east-1"
     # Preserved retrieval/ingestion behaviour (original values).
     chunk_size: int = 1000
     chunk_overlap: int = 200
@@ -133,6 +142,8 @@ def load_config() -> AppConfig:
         llm_api_key=_get_str("LLM_API_KEY", "lm-studio"),
         llm_model=_get_str("LLM_MODEL", "local-model"),
         llm_temperature=_get_float("LLM_TEMPERATURE", 0.0),
+        answer_model_id=_get_str("ANSWER_MODEL_ID", ""),
+        bedrock_region=_get_str("BEDROCK_REGION", "us-east-1"),
         chunk_size=_get_int("CHUNK_SIZE", 1000),
         chunk_overlap=_get_int("CHUNK_OVERLAP", 200),
         retrieval_k=_get_int("RETRIEVAL_K", 5),

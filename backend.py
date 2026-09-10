@@ -357,6 +357,10 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
         raw = provider.generate(context_text, question, template)
     except Exception as e:
         logger.warning("LLM generation failed: %s", e)
+        hint = getattr(provider, "offline_message", None)
+        if callable(hint):
+            # Provider-specific guidance (lmstudio text unchanged).
+            raise ConnectionError(hint(cfg, e))
         raise ConnectionError(
             "LLM endpoint is unreachable. Make sure LM Studio Server is running "
             f"at {getattr(cfg, 'llm_base_url', 'http://localhost:1234/v1')}."

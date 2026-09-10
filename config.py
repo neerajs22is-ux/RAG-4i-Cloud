@@ -92,6 +92,14 @@ class AppConfig:
     # runtime chain, never from config (there is no key setting on purpose).
     answer_model_id: str = ""
     bedrock_region: str = "us-east-1"
+    # Query planner / reasoning LLM (Phase 5D). Disabled by default:
+    # REASONING_ENABLED=0 reproduces the exact 4.12 behavior. Answer and
+    # reasoning models/providers stay independently configurable.
+    reasoning_enabled: str = "0"
+    reasoning_provider: str = ""
+    reasoning_model_id: str = ""
+    reasoning_region: str = "us-east-1"
+    reasoning_timeout_s: int = 5
     # Preserved retrieval/ingestion behaviour (original values).
     chunk_size: int = 1000
     chunk_overlap: int = 200
@@ -147,6 +155,11 @@ def load_config() -> AppConfig:
         llm_temperature=_get_float("LLM_TEMPERATURE", 0.0),
         answer_model_id=_get_str("ANSWER_MODEL_ID", ""),
         bedrock_region=_get_str("BEDROCK_REGION", "us-east-1"),
+        reasoning_enabled=_get_str("REASONING_ENABLED", "0"),
+        reasoning_provider=_get_str("REASONING_PROVIDER", ""),
+        reasoning_model_id=_get_str("REASONING_MODEL_ID", ""),
+        reasoning_region=_get_str("REASONING_REGION", "us-east-1"),
+        reasoning_timeout_s=_get_int("REASONING_TIMEOUT_S", 5),
         chunk_size=_get_int("CHUNK_SIZE", 1000),
         chunk_overlap=_get_int("CHUNK_OVERLAP", 200),
         retrieval_k=_get_int("RETRIEVAL_K", 5),

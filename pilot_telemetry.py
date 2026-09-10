@@ -71,13 +71,28 @@ def top_retrieval_score(sources) -> float | None:
     return best
 
 
+# Reasoning telemetry keys (Phase 5D). Only ever attached when a
+# reasoning record is explicitly supplied; existing events keep their
+# exact shape.
+REASONING_KEYS = ("reasoning_used", "reasoning_provider",
+                  "reasoning_model", "planner_latency_ms",
+                  "planner_failure_category", "escalation_reason",
+                  "planner_cached", "planner_tokens_in",
+                  "planner_tokens_out", "reasoning_cost_usd", "workflow")
+
+
 def build_telemetry_event(*, message_id=None, answer_label=None,
                           source_count=0, retrieval_strength=None,
                           total_ms=None, timings=None,
                           feedback=None, feedback_category=None,
-                          timestamp=None) -> dict:
-    """Metadata-only event. Never includes question/answer/document text."""
-    return {
+                          timestamp=None, reasoning=None) -> dict:
+    """Metadata-only event. Never includes question/answer/document text.
+
+    reasoning is an optional metadata-only record (see query_planner):
+    whitelisted keys are merged when supplied, otherwise omitted so
+    existing events keep their exact shape.
+    """
+    event = {
         "timestamp": timestamp or utc_now_iso(),
         "message_id": message_id,
         "answer_label": answer_label,
@@ -91,6 +106,11 @@ def build_telemetry_event(*, message_id=None, answer_label=None,
         "feedback": feedback,
         "feedback_category": validate_feedback_category(feedback_category),
     }
+    if reasoning:
+        for key in REASONING_KEYS:
+            if key in reasoning:
+                event[key] = reasoning[key]
+    return event
 
 
 class PilotTelemetryStore:
@@ -106,6 +126,9 @@ class PilotTelemetryStore:
             "timestamp", "message_id", "answer_label", "source_count",
             "retrieval_strength", "total_ms", "retrieval_ms", "support_ms",
             "preparation_ms", "generation_ms", "feedback", "feedback_category")}
+        for k in REASONING_KEYS:
+            if k in event:
+                clean[k] = event[k]
         if not clean.get("timestamp"):
             clean["timestamp"] = utc_now_iso()
         self._events.append(clean)

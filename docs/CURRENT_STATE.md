@@ -51,6 +51,8 @@ thresholds, prompts, and provider boundaries frozen (see RAG_INVARIANTS.md).
 - Original `RAG-4i` repo (sibling directory): read-only reference, never touch.
 
 ## Immediate roadmap
-- Nothing scheduled; Phase 5 not started. Candidate future work is
+- Phase 5 in progress: 5.0 foundation, 5A Bedrock answer provider,
+  5B scope primitives, 5C session uploads, 5D query planner (see
+  `docs/PHASE_5_*.md`; 5E/5F not started). Candidate future work is
   scoped (not implemented) in `docs/adr-retrieval-upgrades.md` and
   `docs/adr-chat-history.md`.

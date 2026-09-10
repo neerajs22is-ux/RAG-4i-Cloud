@@ -34,8 +34,12 @@ def estimate_cost_usd(model_key, in_tokens, out_tokens):
 
 
 def compute(answer, sources, info, latencies, evidence_text="",
-            model_key="echo"):
-    """Deterministic metric bundle. Never stores document/answer text."""
+            model_key="echo", reasoning=None):
+    """Deterministic metric bundle. Never stores document/answer text.
+
+    reasoning is the metadata-only record from query_planner (or None
+    for the frozen baseline); only whitelisted scalar fields land here.
+    """
     from answer_support import assess_support, citation_guard
 
     sources = sources or []
@@ -49,6 +53,13 @@ def compute(answer, sources, info, latencies, evidence_text="",
     in_tok, in_how = estimate_tokens(evidence_text)
     out_tok, out_how = estimate_tokens(answer or "")
     cost, cost_how = estimate_cost_usd(model_key, in_tok, out_tok)
+    reasoning = reasoning or {}
+    planner_latency = reasoning.get("planner_latency_ms")
+    try:
+        planner_latency = None if planner_latency is None \
+            else max(0, int(planner_latency))
+    except (TypeError, ValueError):
+        planner_latency = None
     return {
         "answer_chars": len(answer or ""),
         "source_count": len(sources),
@@ -71,8 +82,14 @@ def compute(answer, sources, info, latencies, evidence_text="",
         "cost_method": cost_how,
         "model_key": model_key,
         "workflow": (info or {}).get("workflow"),
-        "planner_invoked": False,          # 5.0 has no planner
-        "planner_valid": None,
+        "planner_invoked": bool(reasoning.get("reasoning_used", False)),
+        "planner_valid": (False if reasoning.get("planner_failure_category")
+                          else (True if reasoning.get("reasoning_used")
+                                else None)),
+        "planner_failure_category": reasoning.get("planner_failure_category"),
+        "escalation_reason": reasoning.get("escalation_reason"),
+        "planner_latency_ms": planner_latency,
+        "planner_cached": bool(reasoning.get("planner_cached", False)),
     }
 
 

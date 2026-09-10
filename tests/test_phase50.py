@@ -65,7 +65,7 @@ class TestHarnessDeterminism(unittest.TestCase):
                          {mk: mv for mk, mv in v.items()
                           if mk not in ("wall_ms", "retrieval_ms",
                                         "support_ms", "generation_ms",
-                                        "total_ms")})
+                                        "total_ms", "planner_latency_ms")})
                      for k, v in r.items()} for r in results]
 
         self.assertEqual(scrub(first["results"]), scrub(second["results"]))

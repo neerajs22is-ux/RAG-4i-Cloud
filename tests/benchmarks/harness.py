@@ -196,14 +196,17 @@ def check_expectations(answer, sources, info, expect):
     return failures
 
 
-def run_case(case, documents, llm=None, model_key="echo"):
+def run_case(case, documents, llm=None, model_key="echo", planner=None):
     """Run one case deterministically.
 
     Cases with "session_documents" index them under a fresh session id
     and bind it for retrieval, unless "bind" is "other" (a different
     fresh id: the cross-session probe). Cases with "requires" stay
-    skipped (future gates).
+    skipped (future gates). planner is an optional query_planner bundle
+    (or the string "deterministic" for the no-LLM planner); without it
+    the frozen 4.12 path runs.
     """
+    from query_planner import DeterministicPlanner, PlanCache, query_planned
     from workflows import query_workflow
     from .metrics import compute
     import config
@@ -234,26 +237,55 @@ def run_case(case, documents, llm=None, model_key="echo"):
     llm = llm or EchoLLM()
     context = [m for m in (case.get("context") or [])]
     t0 = time.monotonic()
+    reasoning = None
     try:
-        answer, sources, info = query_workflow(
-            case["query"], config=config.load_config(), vector_store=store,
-            llm_provider=llm, conversation_context=context,
-            session_id=bind_sid)
+        if planner is None:
+            answer, sources, info = query_workflow(
+                case["query"], config=config.load_config(),
+                vector_store=store, llm_provider=llm,
+                conversation_context=context, session_id=bind_sid)
+        else:
+            if planner == "deterministic":
+                bundle = {"planner": DeterministicPlanner(),
+                          "cache": PlanCache(),
+                          "provider": "deterministic", "model": "none",
+                          "timeout_s": 5,
+                          "_meta_base": {"reasoning_used": False}}
+            else:
+                bundle = planner
+            answer, sources, info, reasoning = query_planned(
+                case["query"], config=config.load_config(),
+                vector_store=store, llm_provider=llm,
+                conversation_context=context, session_id=bind_sid,
+                bundle=bundle)
     except Exception as e:  # harness reports, never raises
         return {"id": case["id"], "status": "error", "error": repr(e)[:200]}
     wall_ms = max(0, int((time.monotonic() - t0) * 1000))
     evidence = " ".join((s or {}).get("content", "") for s in sources)
     metrics = compute(answer, sources, info, {"wall_ms": wall_ms},
-                      evidence_text=evidence, model_key=model_key)
+                      evidence_text=evidence, model_key=model_key,
+                      reasoning=reasoning)
     failures = check_expectations(answer, sources, info, case.get("expect"))
-    return {"id": case["id"], "status": "pass" if not failures else "fail",
-            "failures": failures, "metrics": metrics}
+    result = {"id": case["id"], "status": "pass" if not failures else "fail",
+              "failures": failures, "metrics": metrics}
+    if reasoning is not None:
+        result["reasoning"] = {k: reasoning.get(k) for k in (
+            "reasoning_used", "escalation_reason",
+            "planner_failure_category", "planner_cached",
+            "planner_latency_ms") if k in reasoning}
+    return result
 
 
-def run_all(cases_path=None, llm=None, model_key="echo"):
-    """Run every case; returns {"results": [...], "summary": {...}}."""
+def run_all(cases_path=None, llm=None, model_key="echo", planner=None):
+    """Run every case; returns {"results": [...], "summary": {...}}.
+
+    planner=None reproduces the frozen baseline; pass "deterministic"
+    or a query_planner bundle to measure the planned dimension. Planner
+    telemetry lands per-result under "reasoning" (metadata only).
+    """
     data = load_cases(cases_path)
-    results = [run_case(c, data["documents"], llm=llm, model_key=model_key)
+    results = [run_case(c, data["documents"], llm=llm, model_key=model_key,
+                        planner=planner)
                for c in data["cases"]]
     done = [r for r in results if r["status"] != "skipped"]
     summary = {"total": len(results),

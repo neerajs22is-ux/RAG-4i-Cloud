@@ -466,12 +466,14 @@ def _empty_timings():
 
 def query_workflow(query_text, config=None, vector_store=None,
                    llm_provider=None, conversation_context=None,
-                   known_files=None, on_phase=None, session_id=None):
+                   known_files=None, on_phase=None, session_id=None,
+                   extra_forms=None):
     """Non-streaming workflow runner (tests + compat).
 
     Returns (answer: str, sources: list, info: dict). NORMAL workflow
     delegates to backend.query_documents so ordinary Q&A is unchanged.
     session_id scopes retrieval (None = persistent-only).
+    extra_forms augments normal retrieval only (Phase 5D planned path).
     """
     from backend import query_documents
 
@@ -482,7 +484,7 @@ def query_workflow(query_text, config=None, vector_store=None,
             query_text, config=config, vector_store=vector_store,
             llm_provider=llm_provider,
             conversation_context=conversation_context, on_phase=on_phase,
-            session_id=session_id)
+            session_id=session_id, extra_forms=extra_forms)
         return answer, sources, {"workflow": NORMAL, "label": None,
                                  "needs_retrieval": True}
     if detected["workflow"] == COMPARISON:
@@ -500,12 +502,14 @@ def query_workflow(query_text, config=None, vector_store=None,
 
 def stream_workflow_answer(query_text, config=None, vector_store=None,
                            llm_provider=None, conversation_context=None,
-                           known_files=None, on_phase=None, session_id=None):
+                           known_files=None, on_phase=None, session_id=None,
+                           extra_forms=None):
     """Streaming workflow entry (UI). Same (info, stream) shape as
     backend.stream_answer plus workflow/label/fallback keys.
 
     NORMAL delegates to backend.stream_answer untouched.
     session_id scopes retrieval (None = persistent-only).
+    extra_forms augments normal retrieval only (Phase 5D planned path).
     """
     from backend import stream_answer
 
@@ -515,7 +519,7 @@ def stream_workflow_answer(query_text, config=None, vector_store=None,
             query_text, config=config, vector_store=vector_store,
             llm_provider=llm_provider,
             conversation_context=conversation_context, on_phase=on_phase,
-            session_id=session_id)
+            session_id=session_id, extra_forms=extra_forms)
         info["workflow"] = NORMAL
         info["label"] = None
         info["fallback_template"] = None

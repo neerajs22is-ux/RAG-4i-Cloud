@@ -1,4 +1,4 @@
-# Phase 5 Architecture (end-state spec — design only, nothing implemented)
+# Phase 5 Architecture (end-state spec — 5D planner implemented, rest as specified)
 
 Baseline: Phase 4.12 at `35674f8`. Phase 5 law: **the models may become
 smarter; the evidence system does not become less deterministic.**
@@ -43,8 +43,14 @@ LLMProvider (existing ABC: generate/generate_stream/is_reachable/describe)
 
 PlannerProvider (NEW, 5D): generate_plan(prompt, schema) -> dict|error
 └── BedrockPlannerProvider: ChatBedrockConverse.with_structured_output
-    (forced tool calling today; native outputConfig when langchain-aws
-    supports it — see model evaluation doc)
+    (forced tool calling — the verified path; native outputConfig is
+    unverified for the installed langchain-aws, see 5D report)
+
+As built: `LLMQueryPlanner(structured_fn)` takes an injected
+`structured_fn(prompt, schema) -> dict`; production wiring
+(`build_llm_planner`) adapts a `BedrockConverseProvider` chat model via
+forced tool calling. No tools/agents, no answer generation in the
+planner class by construction.
 ```
 
 Factory seam: `get_llm_provider(config)` currently ignores
@@ -108,7 +114,7 @@ deletion completes. Delete must cover the vector rows AND any cached
 text (no orphaned S3 objects: session files live under a per-session
 prefix deleted as a unit).
 
-## G. Planner → validator → workflow boundary
+## G. Planner → validator → workflow boundary (implemented, 5D)
 
 ```text
 planner output (JSON): {sub_queries[], targets[], fields[], strategy}
@@ -123,6 +129,21 @@ validator (deterministic, no LLM):
 workflows.py executes with the SAME retrieval/generation/verify steps
 ```
 
+As built (`query_planner.py`): Plan v1 has exactly the eight approved
+keys (see prompt §2); the validator returns `(plan, None)` or
+`(None, category)` and never repairs. Workflow type stays with
+deterministic detection — a plan claiming another workflow is discarded
+and counted. Deterministic plans carry empty `retrieval_queries`, so
+the executor augments nothing and the 4.12 path runs byte-identically.
+LLM plans may add ≤4 validated queries to normal retrieval only
+(appended after `build_query_forms`, same max-pool/top-k/threshold).
+A required clarification renders a deterministic template, never plan
+text. Bounded LRU plan cache keyed by
+(schema, normalized question, sorted document IDs, session, provider,
+model). Escalation reasons emitted: non-document, ordinary,
+ambiguous_target, compound, complex_extraction, multi_form_retrieval
+(`comparison`/`other` reserved).
+
 The validator is small, pure, and fully unit-tested. The planner can
 be wrong; the system cannot.
 
@@ -133,8 +154,14 @@ be wrong; the system cannot.
   error. Never silently substitute another model (invariant).
 - Planner timeout/invalid JSON → silent-to-user fallback to the 4.12
   deterministic path + telemetry counter (no user-visible error for a
-  helper that adds no value that turn).
+  helper that adds no value that turn). As built, failure categories
+  are: credentials, unavailable, timeout, malformed, schema, workflow
+  (reroute attempt), unsupported, model — each recorded, each falling
+  back to the deterministic path with identical evidence behavior.
 - `REASONING_ENABLED=0` → byte-identical 4.12 behaviour (acceptance gate).
+  As built, `get_session_planner_bundle` returns None without building
+   anything, and the app takes the untouched call path (proven by parity
+   tests, not just inspection).
 - Session store unavailable → session features disable with a clear
   message; persistent Q&A continues.
 

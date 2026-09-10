@@ -42,6 +42,12 @@ Micro** on schema-valid first-try rate.
 - Native `outputConfig` JSON-schema is NOT yet in langchain-aws (open
   issue): use `with_structured_output` (forced tool calling) first;
   adopt native output when the library lands.
+- As implemented (5D): the planner adapter uses forced tool calling
+  exclusively. `langchain_aws` is not installed in the dev/CI
+  environment, so native support is unverified here — the
+  `supports_native_structured_output()` probe documents exactly that,
+  and every plan still passes the deterministic validator regardless
+  of which structured path produced it.
 - Prompt caching: our frozen system templates are ideal cache blocks;
   enable `cachePoint` on the prompt template to cut input cost/latency.
 - Token accounting: Converse returns usage metadata; the harness

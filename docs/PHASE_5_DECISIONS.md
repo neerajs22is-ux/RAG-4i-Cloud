@@ -42,6 +42,19 @@
 - Re-indexing identical content under a session re-scopes those chunk
   IDs via upsert (deterministic, no duplicates) rather than forking.
 
+## DECIDED (5D)
+
+- Planner proposes, validator disposes, executor (existing runners)
+  stays authoritative; plan/workflow mismatch is discarded + counted.
+- Deterministic plans carry empty `retrieval_queries` (augmentation
+  neutral by construction); LLM plans augment normal retrieval only.
+- Clarifications render a deterministic template; plan text is never
+  rendered, logged, or telemetered.
+- Forced-tool structured output is the v1 adapter; native outputConfig
+  adoption waits on langchain-aws verification. `comparison`/`other`
+  escalation reasons reserved, not emitted.
+- Thresholds file untouched by 5D (measurements reported separately).
+
 ## PENDING BENCHMARK
 
 - Cloud provider final confirmation (Bedrock vs fallback).

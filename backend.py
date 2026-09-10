@@ -292,7 +292,7 @@ def build_query_forms(query_text: str):
 
 
 def retrieve_documents(query_text, config=None, vector_store=None, k=None,
-                       threshold=None, session_id=None):
+                       threshold=None, session_id=None, extra_forms=None):
     """Search the vector store; return structured sources (filtered by threshold).
 
     Tries each deterministic query form and keeps each chunk's best score
@@ -301,6 +301,9 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
     admits that session's rows (never another session's). Malformed IDs
     raise ValueError. The store is called without the kwarg when unbound
     so duck-typed stores keep working.
+    extra_forms (Phase 5D): validated planner queries APPENDED after the
+    deterministic forms (deduplicated). Same mechanism, scoring, top-k,
+    and threshold. None/empty means no augmentation (4.12 behavior).
     """
     from document_scope import validate_session_id
     from embeddings import get_embedding_provider
@@ -319,7 +322,12 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
     # Raises if DB missing/unavailable -> caller maps to user message.
     best = {}
     order = []
-    for form in build_query_forms(query_text):
+    forms = build_query_forms(query_text)
+    for extra in extra_forms or []:
+        cleaned = (extra or "").strip()
+        if cleaned and cleaned not in forms:
+            forms.append(cleaned)
+    for form in forms:
         if session_id is None:
             hits = vector_store.search(form, k=top_k)
         else:
@@ -385,7 +393,7 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
 
 def query_documents(query_text, config=None, vector_store=None, llm_provider=None,
                     conversation_context=None, on_phase=None,
-                    session_id=None):
+                    session_id=None, extra_forms=None):
     """Combined retrieve + generate (kept for UI compat).
 
     The intent observer routes first: conversation/capability/out-of-scope
@@ -411,7 +419,8 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
     _t0 = time.monotonic()
     prepared = _prepare_generation(query_text, cfg, vector_store,
                                    llm_provider, conversation_context,
-                                   obs, on_phase, session_id)
+                                   obs, on_phase, session_id,
+                                   extra_forms=extra_forms)
     _prep_timings = prepared.get("timings", {})
     if prepared["failed"]:
         logger.info("query answered in %.2fs (sources=%d, route=%s "
@@ -459,7 +468,7 @@ def query_documents(query_text, config=None, vector_store=None, llm_provider=Non
 
 def _prepare_generation(query_text, cfg, vector_store, llm_provider,
                         conversation_context, obs, on_phase=None,
-                        session_id=None):
+                        session_id=None, extra_forms=None):
     """Shared preparation for streaming and non-streaming generation.
 
     Runs routing (already done by caller), retrieval (exactly once),
@@ -516,7 +525,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     try:
         retrieved = retrieve_documents(
             retrieval_query, config=cfg, vector_store=vector_store,
-            session_id=session_id,
+            session_id=session_id, extra_forms=extra_forms,
         )
         if broad and target_file:
             # Source-aware top-up: same-file chunks as admissible file
@@ -621,7 +630,7 @@ def preview_answer(query_text, config=None, vector_store=None,
 
 def stream_answer(query_text, config=None, vector_store=None,
                   llm_provider=None, conversation_context=None,
-                  on_phase=None, session_id=None):
+                  on_phase=None, session_id=None, extra_forms=None):
     """Streaming answer with synchronous preparation metadata.
 
     Runs routing/retrieval/assessment exactly once (same evidence and
@@ -652,7 +661,8 @@ def stream_answer(query_text, config=None, vector_store=None,
 
     prepared = _prepare_generation(query_text, cfg, vector_store,
                                    llm_provider, conversation_context,
-                                   obs, on_phase, session_id)
+                                   obs, on_phase, session_id,
+                                   extra_forms=extra_forms)
     info = {"answer": prepared["answer"],
             "retrieved": prepared["retrieved"],
             "needs_retrieval": True,

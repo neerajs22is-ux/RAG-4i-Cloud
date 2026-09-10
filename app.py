@@ -282,7 +282,8 @@ with st.sidebar:
         for _key in ("last_followups", "last_failed", "pending_prompt",
                      "starter_cache", "feedback_by_seq", "telemetry_events",
                      "_restore_dismissed", "_restore_snapshot",
-                     "_checklist_dismissed", "open_source"):
+                     "_checklist_dismissed", "open_source",
+                     "_planner_bundle", "_planner_cache"):
             if _key == "telemetry_events":
                 # Telemetry buffer is per-session ephemeral; a new chat
                 # starts a fresh pilot-evaluation window.
@@ -645,18 +646,31 @@ def _handle_prompt(prompt_text):
             memory.add("user", prompt_text)
             history = memory.as_context()
 
-            # Streaming workflow entry: normal questions take the frozen
-            # path unchanged; comparison/extraction/summary use the
-            # additive workflows layer (same evidence/sanitizer rules).
+            # Streaming entry: the planner bundle is None unless
+            # reasoning is explicitly enabled, in which case the planned
+            # path runs (deterministic fallback included). Disabled path
+            # below is byte-identical to the 4.12 call.
             from backend import EMPTY_RESPONSE_MESSAGE
+            from query_planner import (get_session_planner_bundle,
+                                       stream_planned_answer)
             from workflows import stream_workflow_answer
             from output_safety import is_empty_response
-            info, stream = stream_workflow_answer(
-                prompt_text, conversation_context=history, on_phase=_phase,
-                session_id=st.session_state.get("session_id"))
+            _bundle = get_session_planner_bundle(st.session_state, cfg)
+            if _bundle is None:
+                info, stream = stream_workflow_answer(
+                    prompt_text, conversation_context=history, on_phase=_phase,
+                    session_id=st.session_state.get("session_id"))
+                _reasoning_meta = None
+            else:
+                info, stream, _reasoning_meta = stream_planned_answer(
+                    prompt_text, config=cfg, conversation_context=history,
+                    on_phase=_phase,
+                    session_id=st.session_state.get("session_id"),
+                    bundle=_bundle)
             _prep.update(ok=True, info=info, stream=stream,
                          needs_retrieval=info["needs_retrieval"],
-                         sources=info["retrieved"])
+                         sources=info["retrieved"],
+                         reasoning=_reasoning_meta)
             status.update(label="Preparation done", state="complete")
         except Exception:
             # No raw stack trace for normal users; details go to console/log.
@@ -769,7 +783,8 @@ def _handle_prompt(prompt_text):
                 message_id=_seq, answer_label=_label,
                 source_count=len(sources or []),
                 retrieval_strength=_strength_val if _strength_val is not None else _strength_txt,
-                total_ms=_total_ms, timings=_timings)
+                total_ms=_total_ms, timings=_timings,
+                reasoning=_prep.get("reasoning"))
             st.session_state.telemetry_events.append(_ev)
             # Structured log (counts/timings only; no content/secrets).
             logger.info("answer telemetry msg=%s label=%s sources=%d "

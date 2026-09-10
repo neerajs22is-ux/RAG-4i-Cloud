@@ -52,6 +52,20 @@ unless noted). The full suite asserts most of these.
 - Session IDs are opaque random 128-bit values; malformed IDs and
   contradictory scope writes fail loudly, never fall back to unscoped
   reads or cross-session access.
+
+## Phase 5D rails (planner; frozen values above unchanged)
+- The planner never renders text, never retrieves, never executes: it
+  proposes a validated JSON plan or nothing.
+- `REASONING_ENABLED=0` reproduces the 4.12 path byte-identically
+  (no planner object, no extra calls).
+- Validated plans can only append retrieval forms (normal workflow) or
+  trigger a deterministic clarification; workflow type, providers,
+  scope, prompts, k/threshold/embeddings are never planner-controlled.
+- Plan cache keys bind schema, normalized question, sorted documents,
+  session, provider, and model; cached plans are validated canonical
+  plans containing no contents or secrets.
+- Reasoning telemetry is metadata-only (no questions, answers, chunks,
+  plans, or secrets).
 - Session uploads (5C): PDF-only with size/count/byte caps; indexed
   session-only (never promoted, no scope toggle); browser filenames are
   display labels, never storage/filesystem identities; document contents

@@ -31,3 +31,18 @@ unless noted). The full suite asserts most of these.
   chunk IDs; pgvector `ON CONFLICT DO NOTHING`); original `RAG-4i` untouched.
 - Streaming changes presentation/latency only (same evidence/prompts).
 - `.env` git-ignored; no secrets in code, logs, or commits.
+
+## Phase 5 rails (added 5.0; frozen values above unchanged)
+- Planner never executes directly: plan output is untrusted input to the
+  deterministic validator; validation failure falls back to the 4.12 path.
+- Scope filter required on every scoped vector search
+  (`persistent OR (session AND current_session_id)`); unbound sessions
+  see persistent-only.
+- Cross-session isolation is a hard acceptance gate (0 leakage).
+- Cloud model failure must not silently substitute another model
+  (explicit fallback flag or honest error).
+- Session uploads must use the existing ingestion pipeline
+  (loader → 1000/200 → MiniLM); same chunk-ID/content-hash rules.
+- `REASONING_ENABLED=0` must preserve the 4.12 path exactly.
+- Persistent/session corpora cannot silently merge at storage level
+  (scope columns + filtered reads in both providers).

@@ -34,11 +34,13 @@ def estimate_cost_usd(model_key, in_tokens, out_tokens):
 
 
 def compute(answer, sources, info, latencies, evidence_text="",
-            model_key="echo", reasoning=None):
+            model_key="echo", reasoning=None, review=None):
     """Deterministic metric bundle. Never stores document/answer text.
 
     reasoning is the metadata-only record from query_planner (or None
-    for the frozen baseline); only whitelisted scalar fields land here.
+    for the frozen baseline); review is the metadata-only record from
+    answer_reviewer (or None when review is off). Only whitelisted
+    scalar fields land here.
     """
     from answer_support import assess_support, citation_guard
 
@@ -60,6 +62,36 @@ def compute(answer, sources, info, latencies, evidence_text="",
             else max(0, int(planner_latency))
     except (TypeError, ValueError):
         planner_latency = None
+    review = review or {}
+    reviewer_latency = review.get("review_latency_ms")
+    try:
+        reviewer_latency = None if reviewer_latency is None \
+            else max(0, int(reviewer_latency))
+    except (TypeError, ValueError):
+        reviewer_latency = None
+    # Reviewer cost: estimated from reviewer token metadata when both
+    # the model key is priced and token counts are present; otherwise
+    # None (unknown-model or unavailable). Never blocks the suite.
+    review_cost = review.get("review_cost_usd")
+    if review_cost is None:
+        try:
+            rin = review.get("review_tokens_in")
+            rout = review.get("review_tokens_out")
+            rmodel = review.get("review_model") or ""
+            rkey = None
+            low = str(rmodel).lower()
+            for candidate in PRICING:
+                if candidate != "echo" and candidate != "qwen-local" \
+                        and candidate in low:
+                    rkey = candidate
+                    break
+            if rkey is not None and isinstance(rin, int) \
+                    and isinstance(rout, int):
+                review_cost, _how = estimate_cost_usd(rkey, rin, rout)
+            else:
+                review_cost = None
+        except (TypeError, ValueError):
+            review_cost = None
     return {
         "answer_chars": len(answer or ""),
         "source_count": len(sources),
@@ -90,6 +122,25 @@ def compute(answer, sources, info, latencies, evidence_text="",
         "escalation_reason": reasoning.get("escalation_reason"),
         "planner_latency_ms": planner_latency,
         "planner_cached": bool(reasoning.get("planner_cached", False)),
+        # Phase 5E reviewer dimensions (metadata only; None when off).
+        # guard_before/after come from the review record (counts only).
+        "review_used": bool(review.get("review_used", False)),
+        "review_verdict": review.get("review_verdict"),
+        "review_trigger": review.get("review_trigger"),
+        "review_failure_category": review.get("review_failure_category"),
+        "repair_attempted": bool(review.get("repair_attempted", False)),
+        "repair_succeeded": bool(review.get("repair_succeeded", False)),
+        "reviewer_latency_ms": reviewer_latency,
+        "review_tokens_in": review.get("review_tokens_in"),
+        "review_tokens_out": review.get("review_tokens_out"),
+        "review_cost_usd": review_cost,
+        "guard_before_flagged": review.get("guard_before_flagged"),
+        "guard_before_total": review.get("guard_before_total"),
+        "guard_after_flagged": guard["count"],
+        "guard_after_total": guard["total"],
+        "review_valid": (False if review.get("review_failure_category")
+                         else (True if review.get("review_used")
+                               else None)),
     }
 
 

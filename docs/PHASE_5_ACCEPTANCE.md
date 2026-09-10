@@ -51,3 +51,22 @@ form lives in `tests/benchmarks/thresholds.json`.
   completeness, extraction recall, ambiguous-escalation precision)
   large enough to justify added latency + cost (pending-calibration,
   reported as a benchmark report, not a feeling).
+
+## 5E (answer reviewer / bounded repair)
+
+- `REVIEW_ENABLED=0` reproduces the pre-5E benchmark exactly
+  (decided, diff-zero gate; proven by `reviewer="deterministic"`
+  parity in `tests/test_phase5e.py` + harness).
+- Zero cross-session leakage including gap-fill retrieval: 0 session
+  chunks across the isolation probe set (decided, hard gate).
+- Exactly one repair cycle, never loops (decided, structural).
+- Reviewer never generates the final answer (decided, structural:
+  no `generate`/`generate_stream` on reviewer classes).
+- Citation coverage before/after, material-gap correction rate,
+  false repair rate, reviewer schema reliability, reviewer latency,
+  reviewer token/cost overhead, net answer-quality delta: all
+  measured per case (harness `reviewer=` + metrics `review_*` +
+  `guard_before/after`; synthetic data only) and reported as a
+  benchmark report (pending-calibration). The gate question is: does
+  the measurable grounding improvement justify the reviewer cost?
+- `thresholds.json` unchanged by 5E (no silent gate changes).

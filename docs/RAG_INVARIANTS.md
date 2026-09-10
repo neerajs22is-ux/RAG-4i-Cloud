@@ -70,3 +70,21 @@ unless noted). The full suite asserts most of these.
   session-only (never promoted, no scope toggle); browser filenames are
   display labels, never storage/filesystem identities; document contents
   never enter metadata-only telemetry; partial states are never ready.
+
+## Phase 5E rails (reviewer; frozen values above unchanged)
+- The reviewer never writes user-facing prose, never retrieves,
+  never executes, never modifies storage/vectors/sessions/scope: it
+  proposes a validated JSON verdict or nothing.
+- `REVIEW_ENABLED=0` preserves the pre-5E path exactly (no reviewer
+  object, no network call, no unnecessary import).
+- Only `repair` repairs, at most ONE deterministic gap-fill retrieval
+  through the SAME mechanism (k=5, threshold 0.3, MiniLM, existing
+  chunking/scoring, provider-side `persistent OR (session AND
+  current)`); regeneration uses the EXISTING answer path (evidence
+  set only; prompts, temperature, providers, streaming, sanitizer,
+  guard, workflow semantics unchanged).
+- Suggested followup queries are untrusted strings: validated,
+  scope-preserving retrieval intents only (never SQL/Chroma paths,
+  never filter/scope changes, never cross-session access).
+- Review telemetry is metadata-only (no questions, answers, chunks,
+  raw reviewer output, or secrets).

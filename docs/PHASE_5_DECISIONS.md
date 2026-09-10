@@ -55,11 +55,33 @@
   escalation reasons reserved, not emitted.
 - Thresholds file untouched by 5D (measurements reported separately).
 
+## DECIDED (5E)
+
+- Reviewer is downstream quality control, never a second planner,
+  fact checker, answer writer, agent, or tool executor; the
+  deterministic evidence executor stays authoritative.
+- Verdict schema fixed at version 1 (`pass`/`repair`/`insufficient`);
+  gaps are missing_aspect / unsupported_claim only (style, wording,
+  verbosity, formatting are never gaps).
+- Invocation is deterministic: citation-guard flag, comparison,
+  summary, or REVIEW_ALWAYS_IF_CONFIGURED; ordinary answers are not
+  reviewed by default; system answers and empty evidence never are.
+- Only `repair` repairs, at most ONE gap-fill retrieval +
+  regeneration through the existing path (k=5, threshold 0.3, MiniLM,
+  scope `persistent OR (session AND current)`); insufficient never
+  searches; failures preserve the original answer.
+- Forced-tool structured output is the v1 reviewer adapter (same
+  verified path as 5D); native outputConfig waits on langchain-aws
+  verification (still not installed here).
+- Thresholds file untouched by 5E (measurements reported separately).
+
 ## PENDING BENCHMARK
 
 - Cloud provider final confirmation (Bedrock vs fallback).
 - Answer model: Sonnet 4.6 vs Haiku 4.5 (Nova Pro cost control).
 - Planner model: Haiku 4.5 vs Nova Micro.
+- Reviewer model: Haiku 4.5 vs Nova Micro (schema reliability +
+  gap-correction per cost).
 - Inference region confirmation (us-east-1 in-region availability of
   chosen model IDs at kickoff).
 - All pending-calibration numeric gates (method in PHASE_5_ACCEPTANCE).

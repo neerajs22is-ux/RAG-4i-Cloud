@@ -196,7 +196,8 @@ def check_expectations(answer, sources, info, expect):
     return failures
 
 
-def run_case(case, documents, llm=None, model_key="echo", planner=None):
+def run_case(case, documents, llm=None, model_key="echo", planner=None,
+             reviewer=None):
     """Run one case deterministically.
 
     Cases with "session_documents" index them under a fresh session id
@@ -204,7 +205,12 @@ def run_case(case, documents, llm=None, model_key="echo", planner=None):
     fresh id: the cross-session probe). Cases with "requires" stay
     skipped (future gates). planner is an optional query_planner bundle
     (or the string "deterministic" for the no-LLM planner); without it
-    the frozen 4.12 path runs.
+    the frozen 4.12 path runs. reviewer is an optional
+    answer_reviewer bundle (or the string "deterministic" for the
+    no-LLM pass-only reviewer); without it no review runs. When a
+    reviewer is given, the reviewed path runs (planner bundle honored
+    when also given) and review telemetry lands per-result under
+    "review" (metadata only).
     """
     from query_planner import DeterministicPlanner, PlanCache, query_planned
     from workflows import query_workflow
@@ -213,7 +219,7 @@ def run_case(case, documents, llm=None, model_key="echo", planner=None):
 
     if case.get("requires"):
         return {"id": case["id"], "status": "skipped",
-                "reason": f"requires-{case['requires']}"}
+                "reason": "requires-%s" % (case['requires'],)}
     import secrets
     docs = []
     for key in case["documents"]:
@@ -238,13 +244,14 @@ def run_case(case, documents, llm=None, model_key="echo", planner=None):
     context = [m for m in (case.get("context") or [])]
     t0 = time.monotonic()
     reasoning = None
+    review = None
     try:
-        if planner is None:
+        if reviewer is None and planner is None:
             answer, sources, info = query_workflow(
                 case["query"], config=config.load_config(),
                 vector_store=store, llm_provider=llm,
                 conversation_context=context, session_id=bind_sid)
-        else:
+        elif reviewer is None:
             if planner == "deterministic":
                 bundle = {"planner": DeterministicPlanner(),
                           "cache": PlanCache(),
@@ -258,13 +265,42 @@ def run_case(case, documents, llm=None, model_key="echo", planner=None):
                 vector_store=store, llm_provider=llm,
                 conversation_context=context, session_id=bind_sid,
                 bundle=bundle)
+        else:
+            from answer_reviewer import (DeterministicReviewer,
+                                         query_reviewed)
+            if planner is None or planner == "deterministic":
+                if planner == "deterministic":
+                    planner_bundle = {
+                        "planner": DeterministicPlanner(),
+                        "cache": PlanCache(),
+                        "provider": "deterministic", "model": "none",
+                        "timeout_s": 5,
+                        "_meta_base": {"reasoning_used": False}}
+                else:
+                    planner_bundle = None
+            else:
+                planner_bundle = planner
+            if reviewer == "deterministic":
+                reviewer_bundle = {
+                    "reviewer": DeterministicReviewer(),
+                    "provider": "deterministic", "model": "none",
+                    "timeout_s": 5,
+                    "_meta_base": {"review_used": False}}
+            else:
+                reviewer_bundle = reviewer
+            answer, sources, info, reasoning, review = query_reviewed(
+                case["query"], config=config.load_config(),
+                vector_store=store, llm_provider=llm,
+                conversation_context=context, session_id=bind_sid,
+                planner_bundle=planner_bundle,
+                reviewer_bundle=reviewer_bundle)
     except Exception as e:  # harness reports, never raises
         return {"id": case["id"], "status": "error", "error": repr(e)[:200]}
     wall_ms = max(0, int((time.monotonic() - t0) * 1000))
     evidence = " ".join((s or {}).get("content", "") for s in sources)
     metrics = compute(answer, sources, info, {"wall_ms": wall_ms},
                       evidence_text=evidence, model_key=model_key,
-                      reasoning=reasoning)
+                      reasoning=reasoning, review=review)
     failures = check_expectations(answer, sources, info, case.get("expect"))
     result = {"id": case["id"], "status": "pass" if not failures else "fail",
               "failures": failures, "metrics": metrics}
@@ -273,19 +309,32 @@ def run_case(case, documents, llm=None, model_key="echo", planner=None):
             "reasoning_used", "escalation_reason",
             "planner_failure_category", "planner_cached",
             "planner_latency_ms") if k in reasoning}
+    if review is not None:
+        result["review"] = {k: review.get(k) for k in (
+            "review_used", "review_verdict", "review_trigger",
+            "review_failure_category", "repair_attempted",
+            "repair_succeeded", "review_latency_ms",
+            "guard_before_flagged", "guard_before_total",
+            "guard_after_flagged", "guard_after_total") if k in review}
     return result
 
 
-def run_all(cases_path=None, llm=None, model_key="echo", planner=None):
+def run_all(cases_path=None, llm=None, model_key="echo", planner=None,
+            reviewer=None):
     """Run every case; returns {"results": [...], "summary": {...}}.
 
     planner=None reproduces the frozen baseline; pass "deterministic"
     or a query_planner bundle to measure the planned dimension. Planner
     telemetry lands per-result under "reasoning" (metadata only).
+    reviewer=None means no review; pass "deterministic" or an
+    answer_reviewer bundle to measure the reviewed dimension. Review
+    telemetry lands per-result under "review" (metadata only), and the
+    summary carries aggregate review counters (all counts, no text).
+    Synthetic benchmark data only.
     """
     data = load_cases(cases_path)
     results = [run_case(c, data["documents"], llm=llm, model_key=model_key,
-                        planner=planner)
+                        planner=planner, reviewer=reviewer)
                for c in data["cases"]]
     done = [r for r in results if r["status"] != "skipped"]
     summary = {"total": len(results),
@@ -293,4 +342,23 @@ def run_all(cases_path=None, llm=None, model_key="echo", planner=None):
                "failed": sum(1 for r in done if r["status"] != "pass"),
                "skipped": sum(1 for r in results if r["status"] == "skipped"),
                "cases_version": data["version"]}
+    if reviewer is not None:
+        reviewed = [r for r in done if (r.get("metrics") or {}).get(
+            "review_used")]
+        repairs = [r for r in reviewed if (r.get("metrics") or {}).get(
+            "repair_attempted")]
+        succeeded = [r for r in repairs if (r.get("metrics") or {}).get(
+            "repair_succeeded")]
+        guard_fixed = 0
+        for r in succeeded:
+            m = r.get("metrics") or {}
+            before = m.get("guard_before_flagged")
+            after = m.get("guard_after_flagged")
+            if isinstance(before, int) and isinstance(after, int) \
+                    and after < before:
+                guard_fixed += 1
+        summary["review_used"] = len(reviewed)
+        summary["repair_attempted"] = len(repairs)
+        summary["repair_succeeded"] = len(succeeded)
+        summary["guard_improved"] = guard_fixed
     return {"results": results, "summary": summary}

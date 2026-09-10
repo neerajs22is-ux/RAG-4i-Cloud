@@ -100,6 +100,16 @@ class AppConfig:
     reasoning_model_id: str = ""
     reasoning_region: str = "us-east-1"
     reasoning_timeout_s: int = 5
+    # Answer reviewer / bounded repair (Phase 5E). Disabled by default:
+    # REVIEW_ENABLED=0 preserves the pre-5E answer behavior exactly
+    # (no reviewer call, no extra initialization). Answer, reasoning,
+    # and reviewer providers/models stay independently configurable.
+    review_enabled: str = "0"
+    review_provider: str = ""
+    review_model_id: str = ""
+    review_region: str = "us-east-1"
+    review_timeout_s: int = 5
+    review_always: str = "0"
     # Preserved retrieval/ingestion behaviour (original values).
     chunk_size: int = 1000
     chunk_overlap: int = 200
@@ -160,6 +170,12 @@ def load_config() -> AppConfig:
         reasoning_model_id=_get_str("REASONING_MODEL_ID", ""),
         reasoning_region=_get_str("REASONING_REGION", "us-east-1"),
         reasoning_timeout_s=_get_int("REASONING_TIMEOUT_S", 5),
+        review_enabled=_get_str("REVIEW_ENABLED", "0"),
+        review_provider=_get_str("REVIEW_PROVIDER", ""),
+        review_model_id=_get_str("REVIEW_MODEL_ID", ""),
+        review_region=_get_str("REVIEW_REGION", "us-east-1"),
+        review_timeout_s=_get_int("REVIEW_TIMEOUT_S", 5),
+        review_always=_get_str("REVIEW_ALWAYS_IF_CONFIGURED", "0"),
         chunk_size=_get_int("CHUNK_SIZE", 1000),
         chunk_overlap=_get_int("CHUNK_OVERLAP", 200),
         retrieval_k=_get_int("RETRIEVAL_K", 5),

@@ -52,7 +52,7 @@ thresholds, prompts, and provider boundaries frozen (see RAG_INVARIANTS.md).
 
 ## Immediate roadmap
 - Phase 5 in progress: 5.0 foundation, 5A Bedrock answer provider,
-  5B scope primitives, 5C session uploads, 5D query planner (see
-  `docs/PHASE_5_*.md`; 5E/5F not started). Candidate future work is
-  scoped (not implemented) in `docs/adr-retrieval-upgrades.md` and
-  `docs/adr-chat-history.md`.
+  5B scope primitives, 5C session uploads, 5D query planner, 5E answer
+  reviewer / bounded repair (see `docs/PHASE_5_*.md`; 5F not started).
+  Candidate future work is scoped (not implemented) in
+  `docs/adr-retrieval-upgrades.md` and `docs/adr-chat-history.md`.

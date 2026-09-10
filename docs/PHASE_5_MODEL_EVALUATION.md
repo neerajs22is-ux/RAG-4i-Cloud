@@ -34,6 +34,17 @@ sub-cent on any candidate; the gate is JSON reliability + validation
 failure rate, not price. Shortlist to benchmark: **Haiku 4.5 vs Nova
 Micro** on schema-valid first-try rate.
 
+## Reviewer candidates (strict-JSON verdicts, 5E)
+
+Same Bedrock in-region pool as the planner (verdict JSON is smaller
+than a plan; evidence excerpts dominate input tokens, bounded at
+≤5×1200 chars + ≤2000-char answer). Cost per review is sub-cent on
+any candidate; the gates are schema reliability, false-repair rate,
+and net grounding delta per cost (see PHASE_5_ACCEPTANCE). Shortlist
+to benchmark: **Haiku 4.5 vs Nova Micro** on schema-valid first-try
+rate + material-gap correction rate. No reviewer model is hard-coded;
+`REVIEW_MODEL_ID` is required and independent from answer/reasoning.
+
 ## Integration notes (for 5A/5D implementers)
 
 - `langchain-aws` `ChatBedrockConverse` (add pinned dep): same
@@ -48,6 +59,11 @@ Micro** on schema-valid first-try rate.
   `supports_native_structured_output()` probe documents exactly that,
   and every plan still passes the deterministic validator regardless
   of which structured path produced it.
+- As implemented (5E): the reviewer adapter uses the same forced-tool
+  path exclusively. `langchain_aws` remains not installed here, so
+  native outputConfig is still unverified — the reviewer's
+  `supports_native_structured_output()` probe documents exactly that,
+  and every verdict still passes the deterministic validator.
 - Prompt caching: our frozen system templates are ideal cache blocks;
   enable `cachePoint` on the prompt template to cut input cost/latency.
 - Token accounting: Converse returns usage metadata; the harness

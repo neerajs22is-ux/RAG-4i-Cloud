@@ -80,17 +80,32 @@ REASONING_KEYS = ("reasoning_used", "reasoning_provider",
                   "planner_cached", "planner_tokens_in",
                   "planner_tokens_out", "reasoning_cost_usd", "workflow")
 
+# Review telemetry keys (Phase 5E). Only ever attached when a review
+# record is explicitly supplied; existing events keep their exact
+# shape. Metadata only: counts, labels, timings, never questions,
+# answers, chunks, raw model output, or secrets.
+REVIEW_KEYS = ("review_used", "review_provider", "review_model",
+               "review_latency_ms", "review_verdict",
+               "review_failure_category", "review_trigger",
+               "repair_attempted", "repair_succeeded",
+               "review_tokens_in", "review_tokens_out",
+               "review_cost_usd", "guard_before_flagged",
+               "guard_before_total", "guard_after_flagged",
+               "guard_after_total")
+
 
 def build_telemetry_event(*, message_id=None, answer_label=None,
                           source_count=0, retrieval_strength=None,
                           total_ms=None, timings=None,
                           feedback=None, feedback_category=None,
-                          timestamp=None, reasoning=None) -> dict:
+                          timestamp=None, reasoning=None,
+                          review=None) -> dict:
     """Metadata-only event. Never includes question/answer/document text.
 
     reasoning is an optional metadata-only record (see query_planner):
     whitelisted keys are merged when supplied, otherwise omitted so
-    existing events keep their exact shape.
+    existing events keep their exact shape. review is the same for
+    the Phase 5E reviewer record (see answer_reviewer).
     """
     event = {
         "timestamp": timestamp or utc_now_iso(),
@@ -110,6 +125,10 @@ def build_telemetry_event(*, message_id=None, answer_label=None,
         for key in REASONING_KEYS:
             if key in reasoning:
                 event[key] = reasoning[key]
+    if review:
+        for key in REVIEW_KEYS:
+            if key in review:
+                event[key] = review[key]
     return event
 
 
@@ -127,6 +146,9 @@ class PilotTelemetryStore:
             "retrieval_strength", "total_ms", "retrieval_ms", "support_ms",
             "preparation_ms", "generation_ms", "feedback", "feedback_category")}
         for k in REASONING_KEYS:
+            if k in event:
+                clean[k] = event[k]
+        for k in REVIEW_KEYS:
             if k in event:
                 clean[k] = event[k]
         if not clean.get("timestamp"):

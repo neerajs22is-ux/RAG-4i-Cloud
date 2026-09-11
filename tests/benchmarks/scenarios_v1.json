@@ -1,0 +1,1044 @@
+{
+ "benchmark_seed": 74154,
+ "corpus": "cases_m.json",
+ "corpus_hash": "d2fc0c64ebf3",
+ "notes": "Final controlled benchmark scenario suite v1. Corpus is the frozen 25-doc M-corpus (hash-pinned); this file adds gold metadata only. No real company data; all fictional.",
+ "required_suite_keys": [
+  "expected_clarification",
+  "expected_documents",
+  "expected_scope",
+  "expected_support_level",
+  "expected_workflow",
+  "forbidden_claims",
+  "query",
+  "question_id",
+  "repetition",
+  "required_facts",
+  "scenario_id",
+  "severity"
+ ],
+ "scenarios": [
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "24 months",
+    "48 months"
+   ],
+   "query": "What is the lock-in period in the Riverside lease?",
+   "question_id": "m-normal-lockin",
+   "repetition": "smoke",
+   "required_facts": [
+    "36 months"
+   ],
+   "scenario_id": "S01-normal-lockin",
+   "severity": "material",
+   "documents": [
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "partnership-deed.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "50/50",
+    "equal share"
+   ],
+   "query": "Who are the partners in the partnership deed and what is the profit share?",
+   "question_id": "m-parties",
+   "repetition": "main",
+   "required_facts": [
+    "Verma",
+    "60/40"
+   ],
+   "scenario_id": "S02-parties",
+   "severity": "material",
+   "documents": [
+    "partnership"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "board-minutes-march.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 10",
+    "Rs 15"
+   ],
+   "query": "What dividend did the March board meeting approve?",
+   "question_id": "m-dates",
+   "repetition": "main",
+   "required_facts": [
+    "Rs 12"
+   ],
+   "scenario_id": "S03-dividend",
+   "severity": "material",
+   "documents": [
+    "board"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "sla-cloud.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "99.99%",
+    "99.5%"
+   ],
+   "query": "What uptime does the cloud SLA guarantee and what credit applies?",
+   "question_id": "m-sla",
+   "repetition": "smoke",
+   "required_facts": [
+    "99.9%",
+    "10%"
+   ],
+   "scenario_id": "S04-sla",
+   "severity": "material",
+   "documents": [
+    "sla"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "it-security-procedure.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "30 days",
+    "single factor"
+   ],
+   "query": "What are the password rotation and multifactor requirements?",
+   "question_id": "m-itsec",
+   "repetition": "main",
+   "required_facts": [
+    "90 days",
+    "multifactor"
+   ],
+   "scenario_id": "S05-itsec",
+   "severity": "material",
+   "documents": [
+    "itsec"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "loan-agreement.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 2500000",
+    "7.5%"
+   ],
+   "query": "What are the principal, interest and tenure of the term loan?",
+   "question_id": "m-loan",
+   "repetition": "main",
+   "required_facts": [
+    "25000000",
+    "9.5%",
+    "5 years"
+   ],
+   "scenario_id": "S06-loan",
+   "severity": "material",
+   "documents": [
+    "loan"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "audit-report-fy25.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 45000000",
+    "qualified"
+   ],
+   "query": "What revenue does the FY25 audit report record?",
+   "question_id": "new-audit-revenue",
+   "repetition": "main",
+   "required_facts": [
+    "450000000",
+    "no qualification"
+   ],
+   "scenario_id": "S07-audit",
+   "severity": "material",
+   "documents": [
+    "audit"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "remote-work-policy.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "5 days",
+    "fully remote"
+   ],
+   "query": "How many office days does the hybrid schedule require?",
+   "question_id": "new-remote-days",
+   "repetition": "main",
+   "required_facts": [
+    "3 days"
+   ],
+   "scenario_id": "S08-remote",
+   "severity": "cosmetic",
+   "documents": [
+    "remote"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "group-insurance.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 100000",
+    "employee-paid"
+   ],
+   "query": "What is the group insurance cover amount?",
+   "question_id": "m-insurance",
+   "repetition": "main",
+   "required_facts": [
+    "1000000"
+   ],
+   "scenario_id": "S09-insurance",
+   "severity": "material",
+   "documents": [
+    "insurance"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "consultancy-agreement.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 20000",
+    "consultant owns"
+   ],
+   "query": "What monthly retainer applies and who owns consultancy deliverables?",
+   "question_id": "m-multiform",
+   "repetition": "main",
+   "required_facts": [
+    "200000",
+    "company"
+   ],
+   "scenario_id": "S10-consultancy",
+   "severity": "material",
+   "documents": [
+    "consultancy"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "nda-mutual.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "3 years",
+    "10 years"
+   ],
+   "query": "How long does the Clause 9.1 confidentiality obligation last?",
+   "question_id": "m-exact-clause",
+   "repetition": "smoke",
+   "required_facts": [
+    "5 years",
+    "Clause 9.1"
+   ],
+   "scenario_id": "S11-exact-clause",
+   "severity": "material",
+   "documents": [
+    "nda"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "leave-policy.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "18 days",
+    "30 days"
+   ],
+   "query": "How many annual leave days are granted under Section 3.1?",
+   "question_id": "m-exact-section",
+   "repetition": "main",
+   "required_facts": [
+    "24 days"
+   ],
+   "scenario_id": "S12-exact-section",
+   "severity": "material",
+   "documents": [
+    "leave"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "service-catering.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "30 days",
+    "90 days"
+   ],
+   "query": "How much notice does the catering renewal require?",
+   "question_id": "new-exact-catering",
+   "repetition": "main",
+   "required_facts": [
+    "60 days"
+   ],
+   "scenario_id": "S13-exact-catering",
+   "severity": "material",
+   "documents": [
+    "catering"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "msa-techservices.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 1000000",
+    "unlimited liability"
+   ],
+   "query": "What is the liability cap per claim under Clause 11?",
+   "question_id": "new-exact-msa",
+   "repetition": "main",
+   "required_facts": [
+    "10000000"
+   ],
+   "scenario_id": "S14-exact-msa",
+   "severity": "critical",
+   "documents": [
+    "msa"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "termination-letter-template.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "three months per year",
+    "no severance"
+   ],
+   "query": "What severance does the termination template grant per year of service?",
+   "question_id": "new-exact-severance",
+   "repetition": "main",
+   "required_facts": [
+    "one month salary"
+   ],
+   "scenario_id": "S15-exact-severance",
+   "severity": "material",
+   "documents": [
+    "termination"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Sara Iqbal",
+    "24 months"
+   ],
+   "query": "What is the Riverside lock-in period and who are the parties?",
+   "question_id": "m-compound",
+   "repetition": "main",
+   "required_facts": [
+    "36 months",
+    "Mehta"
+   ],
+   "scenario_id": "S16-compound",
+   "severity": "material",
+   "documents": [
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "vendor-agreement-acme.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "net-45",
+    "2%"
+   ],
+   "query": "What is the Acme late fee and the payment deadline?",
+   "question_id": "m-multipart",
+   "repetition": "main",
+   "required_facts": [
+    "net-30",
+    "1.5%"
+   ],
+   "scenario_id": "S17-multipart",
+   "severity": "material",
+   "documents": [
+    "vendoracme"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "vendor-agreement-apex.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "net-30",
+    "Acme"
+   ],
+   "query": "What are the payment terms with Apex?",
+   "question_id": "m-neardup-select",
+   "repetition": "main",
+   "required_facts": [
+    "net-45",
+    "Apex"
+   ],
+   "scenario_id": "S18-neardup",
+   "severity": "material",
+   "documents": [
+    "vendoracme",
+    "apex"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "board-minutes-march.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Menon approved alone",
+    "Rs 12 confirmed without meeting"
+   ],
+   "query": "What dividend was approved and who attended the March board meeting?",
+   "question_id": "new-compound-board",
+   "repetition": "main",
+   "required_facts": [
+    "Rs 12",
+    "Rao"
+   ],
+   "scenario_id": "S19-compound-board",
+   "severity": "material",
+   "documents": [
+    "board"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "sla-cloud.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "2 hours",
+    "24 hours"
+   ],
+   "query": "What is the critical response time and the uptime guarantee in the cloud SLA?",
+   "question_id": "new-compound-sla",
+   "repetition": "main",
+   "required_facts": [
+    "4 hours",
+    "99.9%"
+   ],
+   "scenario_id": "S20-compound-sla",
+   "severity": "material",
+   "documents": [
+    "sla"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-harbourview.pdf",
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "comparison",
+   "forbidden_claims": [
+    "identical lock-in",
+    "48 months"
+   ],
+   "query": "Compare the lock-in and notice terms in lease-riverside.pdf and lease-harbourview.pdf.",
+   "question_id": "m-compare-leases",
+   "repetition": "main",
+   "required_facts": [
+    "36 months",
+    "24 months"
+   ],
+   "scenario_id": "S21-compare-leases",
+   "severity": "material",
+   "documents": [
+    "riverside",
+    "harbour"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-harbourview.pdf",
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "comparison",
+   "forbidden_claims": [
+    "same parties",
+    "same landlord"
+   ],
+   "query": "Compare the parties in lease-riverside.pdf and lease-harbourview.pdf.",
+   "question_id": "m-compare-parties",
+   "repetition": "main",
+   "required_facts": [
+    "Mehta",
+    "Iqbal"
+   ],
+   "scenario_id": "S22-compare-parties",
+   "severity": "material",
+   "documents": [
+    "harbour",
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "service-catering.pdf",
+    "service-maintenance.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "comparison",
+   "forbidden_claims": [
+    "same renewal",
+    "both 30 days"
+   ],
+   "query": "Compare the renewal notice in service-maintenance.pdf and service-catering.pdf.",
+   "question_id": "new-compare-service",
+   "repetition": "main",
+   "required_facts": [
+    "30 days",
+    "60 days"
+   ],
+   "scenario_id": "S23-compare-service",
+   "severity": "material",
+   "documents": [
+    "maintenance",
+    "catering"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-harbourview.pdf",
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "comparison",
+   "forbidden_claims": [
+    "Rs 12000 for both",
+    "same rent"
+   ],
+   "query": "Compare the monthly maintenance in lease-riverside.pdf and lease-harbourview.pdf.",
+   "question_id": "new-compare-maint",
+   "repetition": "main",
+   "required_facts": [
+    "Rs 12000",
+    "Rs 8000"
+   ],
+   "scenario_id": "S24-compare-maint",
+   "severity": "material",
+   "documents": [
+    "riverside",
+    "harbour"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "employee-handbook.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "summary",
+   "forbidden_claims": [
+    "Martian policy",
+    "stock options"
+   ],
+   "query": "Summarize employee-handbook.pdf.",
+   "question_id": "m-summary-handbook",
+   "repetition": "main",
+   "required_facts": [
+    "24 days",
+    "1000000"
+   ],
+   "scenario_id": "S25-summary-handbook",
+   "severity": "material",
+   "documents": [
+    "handbook"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "sla-cloud.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "summary",
+   "forbidden_claims": [
+    "99.99%",
+    "no credit"
+   ],
+   "query": "Summarize sla-cloud.pdf.",
+   "question_id": "m-summary-sla",
+   "repetition": "main",
+   "required_facts": [
+    "99.9%"
+   ],
+   "scenario_id": "S26-summary-sla",
+   "severity": "material",
+   "documents": [
+    "sla"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "msa-techservices.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "summary",
+   "forbidden_claims": [
+    "unlimited liability",
+    "no renewal"
+   ],
+   "query": "Summarize msa-techservices.pdf.",
+   "question_id": "new-summary-msa",
+   "repetition": "main",
+   "required_facts": [
+    "10000000",
+    "90 days"
+   ],
+   "scenario_id": "S27-summary-msa",
+   "severity": "material",
+   "documents": [
+    "msa"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "privacy-policy.pdf",
+    "privacy-addendum-2026.pdf",
+    "service-maintenance.pdf",
+    "service-catering.pdf",
+    "msa-techservices.pdf",
+    "vendor-agreement-acme.pdf",
+    "vendor-agreement-apex.pdf",
+    "consultancy-agreement.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "extraction",
+   "forbidden_claims": [
+    "no notice found",
+    "single notice period"
+   ],
+   "query": "List all notice periods.",
+   "question_id": "m-extract-notice",
+   "repetition": "main",
+   "required_facts": [
+    "30 days"
+   ],
+   "scenario_id": "S28-extract-notice",
+   "severity": "material",
+   "documents": [
+    "riverside",
+    "harbour",
+    "maintenance",
+    "catering",
+    "offer",
+    "msa",
+    "vendoracme",
+    "apex"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "service-maintenance.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "extraction",
+   "forbidden_claims": [
+    "Rs 200000",
+    "Rs 25000000"
+   ],
+   "query": "Extract all payment amounts from service-maintenance.pdf.",
+   "question_id": "m-extract-amounts",
+   "repetition": "main",
+   "required_facts": [
+    "Rs 50000"
+   ],
+   "scenario_id": "S29-extract-amounts",
+   "severity": "material",
+   "documents": [
+    "maintenance",
+    "consultancy",
+    "loan"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "msa-techservices.pdf",
+    "vendor-agreement-apex.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "extraction",
+   "forbidden_claims": [
+    "no termination clause found"
+   ],
+   "query": "List all termination terms.",
+   "question_id": "new-extract-termination",
+   "repetition": "main",
+   "required_facts": [
+    "30 days"
+   ],
+   "scenario_id": "S30-extract-termination",
+   "severity": "material",
+   "documents": [
+    "msa",
+    "apex",
+    "termination"
+   ]
+  },
+  {
+   "expected_clarification": "To proceed, I need",
+   "expected_documents": [],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "comparison",
+   "forbidden_claims": [
+    "36 months",
+    "24 months"
+   ],
+   "query": "Compare the notice periods.",
+   "question_id": "m-ambiguous-compare",
+   "repetition": "smoke",
+   "required_facts": [],
+   "scenario_id": "S31-ambiguous",
+   "severity": "cosmetic",
+   "documents": [
+    "harbour",
+    "riverside",
+    "maintenance"
+   ]
+  },
+  {
+   "expected_clarification": "To proceed, I need",
+   "expected_documents": [],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "summary",
+   "forbidden_claims": [
+    "36 months",
+    "24 months"
+   ],
+   "query": "Summarize the lease.",
+   "question_id": "new-ambiguous-lease",
+   "repetition": "smoke",
+   "required_facts": [],
+   "scenario_id": "S32-ambiguous-lease",
+   "severity": "cosmetic",
+   "documents": [
+    "riverside",
+    "harbour"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "vendor-agreement-acme.pdf",
+    "vendor-agreement-apex.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "only one vendor exists"
+   ],
+   "query": "What are the payment terms?",
+   "question_id": "new-ambiguous-payment",
+   "repetition": "main",
+   "required_facts": [
+    "net-30",
+    "net-45"
+   ],
+   "scenario_id": "S33-ambiguous-payment",
+   "severity": "material",
+   "documents": [
+    "vendoracme",
+    "apex"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "48 months",
+    "2022 deed controls"
+   ],
+   "query": "What is the lock-in period in the Riverside lease deed?",
+   "question_id": "m-stale-version",
+   "repetition": "main",
+   "required_facts": [
+    "36 months"
+   ],
+   "scenario_id": "S34-stale",
+   "severity": "critical",
+   "documents": [
+    "riverside",
+    "stale"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "privacy-addendum-2026.pdf",
+    "privacy-policy.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "only 7 years",
+    "only 3 years",
+    "no conflict"
+   ],
+   "query": "How long are customer records retained under the privacy policy?",
+   "question_id": "m-conflict-retention",
+   "repetition": "main",
+   "required_facts": [
+    "7 years",
+    "3 years"
+   ],
+   "scenario_id": "S35-conflict",
+   "severity": "critical",
+   "documents": [
+    "privacy",
+    "addendum"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "lease-riverside.pdf"
+   ],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "2 months",
+    "Harbourview"
+   ],
+   "query": "And the notice period?",
+   "question_id": "m-followup-notice",
+   "repetition": "main",
+   "required_facts": [
+    "3 months"
+   ],
+   "scenario_id": "S36-followup",
+   "severity": "material",
+   "session": {
+    "prior_turns": [
+     {
+      "content": "What is the lock-in period in the Riverside lease?",
+      "role": "user"
+     }
+    ]
+   },
+   "documents": [
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [],
+   "expected_scope": "persistent",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [],
+   "query": "Hello",
+   "question_id": "m-greeting",
+   "repetition": "smoke",
+   "required_facts": [],
+   "scenario_id": "S37-greeting",
+   "severity": "cosmetic",
+   "documents": [
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [],
+   "expected_scope": "persistent",
+   "expected_support_level": "unsupported",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "36 months",
+    "Rs 50000"
+   ],
+   "query": "What is the Martian terraforming budget?",
+   "question_id": "m-refusal",
+   "repetition": "smoke",
+   "required_facts": [],
+   "scenario_id": "S38-refusal",
+   "severity": "material",
+   "documents": [
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [],
+   "expected_scope": "persistent",
+   "expected_support_level": "unsupported",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Rs 5000",
+    "Rs 12000"
+   ],
+   "query": "What is the cafeteria menu on Jupiter?",
+   "question_id": "new-refusal-jupiter",
+   "repetition": "smoke",
+   "required_facts": [],
+   "scenario_id": "S39-refusal-2",
+   "severity": "material",
+   "documents": [
+    "riverside"
+   ]
+  },
+  {
+   "expected_clarification": null,
+   "expected_documents": [
+    "appointment-letter-session.pdf"
+   ],
+   "expected_scope": "session",
+   "expected_support_level": "direct",
+   "expected_workflow": "normal",
+   "forbidden_claims": [
+    "Mumbai",
+    "Delhi"
+   ],
+   "query": "When is the joining date in the appointment letter?",
+   "question_id": "m-session-joining",
+   "repetition": "main",
+   "required_facts": [
+    "2026-04-06",
+    "Bangalore"
+   ],
+   "scenario_id": "S40-session",
+   "severity": "critical",
+   "session": {
+    "bind": "own",
+    "documents": [
+     {
+      "chunks": [
+       {
+        "page": 0,
+        "text": "Appointment letter for Rahul Sharma as Senior Analyst. Joining date is 2026-04-06 at the Bangalore office. Reporting manager is Priya Nair."
+       },
+       {
+        "page": 0,
+        "text": "The appointment is subject to background verification. Work location Bangalore, probation six months under the same terms as the offer letter."
+       }
+      ],
+      "file": "appointment-letter-session.pdf"
+     }
+    ]
+   },
+   "documents": [
+    "leave"
+   ]
+  }
+ ],
+ "scoring_version": 1,
+ "suite_version": 1
+}

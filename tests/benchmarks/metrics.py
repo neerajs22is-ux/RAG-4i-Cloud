@@ -14,6 +14,10 @@ def estimate_tokens(text):
 
 
 # USD per 1M tokens (input, output). Dated 2026-09-10; volatile.
+# sonnet-5/luna re-verified 2026-09-10 (us.* profile rate for Sonnet 5
+# carries the ~10% regional premium over the $2.00/$10.00 global rate;
+# Luna $0.22/$1.32 post July-2026 Bedrock cut). Re-verify at live-run
+# time; do NOT silently reuse these if the pricing page differs.
 # Local/deterministic runners cost 0 by definition.
 PRICING = {
     "echo": (0.0, 0.0),
@@ -23,6 +27,8 @@ PRICING = {
     "nova-pro": (0.80, 3.20),
     "haiku-4.5": (1.0, 5.0),
     "sonnet-4.6": (3.0, 15.0),
+    "sonnet-5": (2.20, 11.00),
+    "luna": (0.22, 1.32),
 }
 
 

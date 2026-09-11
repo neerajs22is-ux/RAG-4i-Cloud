@@ -47,6 +47,158 @@ def live_bedrock_llm():
     )
 
 
+def live_bedrock_planner():
+    """Bedrock reasoning bundle for live benchmark comparison, or None.
+
+    Same gate as live_bedrock_llm plus REASONING_ENABLED=1,
+    REASONING_PROVIDER=bedrock and REASONING_MODEL_ID. Raises loudly on
+    misconfiguration; never substitutes another model. Normal suite
+    never enables it.
+    """
+    if os.environ.get("BENCHMARK_LIVE_BEDROCK") != "1":
+        return None
+    import config as config_mod
+    from query_planner import (PlanCache, build_llm_planner,
+                               reasoning_enabled)
+
+    cfg = config_mod.load_config()
+    if not reasoning_enabled(cfg):
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 with planner requires "
+            "REASONING_ENABLED=1.")
+    if (getattr(cfg, "reasoning_provider", "") or "").lower() != "bedrock":
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 with planner requires "
+            "REASONING_PROVIDER=bedrock.")
+    if not (getattr(cfg, "reasoning_model_id", "") or "").strip():
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 with planner requires "
+            "REASONING_MODEL_ID.")
+    planner = build_llm_planner(cfg)
+    return {"planner": planner, "cache": PlanCache(),
+            "provider": planner.provider, "model": planner.model,
+            "timeout_s": planner.timeout_s,
+            "_meta_base": {"reasoning_used": True,
+                           "reasoning_provider": planner.provider,
+                           "reasoning_model": planner.model}}
+
+
+def live_bedrock_reviewer():
+    """Bedrock reviewer bundle for live benchmark comparison, or None.
+
+    Same gate as live_bedrock_llm plus REVIEW_ENABLED=1,
+    REVIEW_PROVIDER=bedrock and REVIEW_MODEL_ID. Raises loudly on
+    misconfiguration; never substitutes another model. Normal suite
+    never enables it.
+    """
+    if os.environ.get("BENCHMARK_LIVE_BEDROCK") != "1":
+        return None
+    import config as config_mod
+    from answer_reviewer import build_llm_reviewer, review_enabled
+
+    cfg = config_mod.load_config()
+    if not review_enabled(cfg):
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 with reviewer requires "
+            "REVIEW_ENABLED=1.")
+    if (getattr(cfg, "review_provider", "") or "").lower() != "bedrock":
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 with reviewer requires "
+            "REVIEW_PROVIDER=bedrock.")
+    if not (getattr(cfg, "review_model_id", "") or "").strip():
+        raise ValueError(
+            "BENCHMARK_LIVE_BEDROCK=1 with reviewer requires "
+            "REVIEW_MODEL_ID.")
+    reviewer = build_llm_reviewer(cfg)
+    return {"reviewer": reviewer,
+            "provider": reviewer.provider, "model": reviewer.model,
+            "timeout_s": reviewer.timeout_s,
+            "_meta_base": {"review_used": True,
+                           "review_provider": reviewer.provider,
+                           "review_model": reviewer.model}}
+
+
+# Live benchmark arms (exact IDs documented in LIVE_ARMS.md; IDs here
+# are explicit and loud, never silent defaults). run_live_arm builds
+# providers from these IDs directly so no .env mutation is needed and
+# a BLOCKED arm raises instead of substituting another model.
+LIVE_ARMS = {
+    "A": {"answer_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "answer_region": "us-east-1", "answer_key": "haiku-4.5",
+          "reasoning_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "reasoning_region": "us-east-1",
+          "reviewer_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "reviewer_region": "us-east-1"},
+    "B": {"answer_model": "us.anthropic.claude-sonnet-5",
+          "answer_region": "us-east-1", "answer_key": "sonnet-5",
+          "reasoning_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "reasoning_region": "us-east-1",
+          "reviewer_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "reviewer_region": "us-east-1"},
+    "C": {"answer_model": "in.openai.gpt-5.6-luna",
+          "answer_region": "ap-south-1", "answer_key": "luna",
+          "reasoning_model": "in.openai.gpt-5.6-luna",
+          "reasoning_region": "ap-south-1",
+          "reviewer_model": "in.openai.gpt-5.6-luna",
+          "reviewer_region": "ap-south-1"},
+}
+
+
+def run_live_arm(arm_name, cases_path=None):
+    """Run one paid live arm end-to-end (answer+reasoning+reviewer).
+
+    Requires BENCHMARK_LIVE_BEDROCK=1 in the environment (paid calls);
+    raises otherwise, and raises (never substitutes) when any arm model
+    is unreachable, denied, or missing access. cases_path selects the
+    S (default, frozen) or M corpus file. Failures are recorded
+    per-case by run_all; no cross-arm fallback exists by construction.
+    """
+    if os.environ.get("BENCHMARK_LIVE_BEDROCK") != "1":
+        raise ValueError(
+            "run_live_arm requires BENCHMARK_LIVE_BEDROCK=1 (paid calls).")
+    if arm_name not in LIVE_ARMS:
+        raise ValueError(
+            "unknown live arm %r (expected one of %s)."
+            % (arm_name, sorted(LIVE_ARMS)))
+    import config as config_mod
+    from answer_reviewer import build_llm_reviewer
+    from bedrock_provider import BedrockConverseProvider
+    from query_planner import PlanCache, build_llm_planner
+
+    arm = LIVE_ARMS[arm_name]
+    llm = BedrockConverseProvider(
+        model_id=arm["answer_model"], region=arm["answer_region"],
+        temperature=0.0)
+    reasoning_cfg = config_mod.AppConfig(
+        reasoning_enabled="1", reasoning_provider="bedrock",
+        reasoning_model_id=arm["reasoning_model"],
+        reasoning_region=arm["reasoning_region"])
+    reasoning = build_llm_planner(reasoning_cfg)
+    planner_bundle = {"planner": reasoning, "cache": PlanCache(),
+                      "provider": reasoning.provider,
+                      "model": reasoning.model,
+                      "timeout_s": reasoning.timeout_s,
+                      "_meta_base": {"reasoning_used": True,
+                                     "reasoning_provider":
+                                         reasoning.provider,
+                                     "reasoning_model": reasoning.model}}
+    review_cfg = config_mod.AppConfig(
+        review_enabled="1", review_provider="bedrock",
+        review_model_id=arm["reviewer_model"],
+        review_region=arm["reviewer_region"])
+    reviewer = build_llm_reviewer(review_cfg)
+    reviewer_bundle = {"reviewer": reviewer,
+                       "provider": reviewer.provider,
+                       "model": reviewer.model,
+                       "timeout_s": reviewer.timeout_s,
+                       "_meta_base": {"review_used": True,
+                                      "review_provider": reviewer.provider,
+                                      "review_model": reviewer.model}}
+    return run_all(cases_path=cases_path, llm=llm,
+                   model_key=arm["answer_key"],
+                   planner=planner_bundle, reviewer=reviewer_bundle)
+
+
 class DictStore:
     """Deterministic word-overlap store (no embeddings, no network).
 

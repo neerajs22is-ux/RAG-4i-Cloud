@@ -1,0 +1,787 @@
+{
+ "cases": [
+  {
+   "category": "normal",
+   "documents": [
+    "riverside"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "lease-riverside.pdf"
+    ],
+    "must_include_any": [
+     "36 months"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-normal-lockin",
+   "notes": "Grounded normal question on one lease.",
+   "query": "What is the lock-in period in the Riverside lease?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "nda"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "nda-mutual.pdf"
+    ],
+    "must_include_any": [
+     "5 years"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-exact-clause",
+   "notes": "Exact clause-number lookup.",
+   "query": "How long does the Clause 9.1 confidentiality obligation last?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "leave"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "leave-policy.pdf"
+    ],
+    "must_include_any": [
+     "24 days"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-exact-section",
+   "notes": "Exact section-number lookup.",
+   "query": "How many annual leave days are granted under Section 3.1?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "riverside"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "lease-riverside.pdf"
+    ],
+    "must_include_any": [
+     "36 months",
+     "Mehta"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-compound",
+   "notes": "Compound question: two requested aspects, one document.",
+   "query": "What is the Riverside lock-in period and who are the parties?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "vendoracme"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "vendor-agreement-acme.pdf"
+    ],
+    "must_include_any": [
+     "net-30",
+     "1.5"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-multipart",
+   "notes": "Multi-part question on payment terms.",
+   "query": "What is the Acme late fee and the payment deadline?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "vendoracme",
+    "apex"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "vendor-agreement-apex.pdf"
+    ],
+    "must_include_any": [
+     "net-45"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-neardup-select",
+   "notes": "Near-duplicate filenames; must select Apex terms.",
+   "query": "What are the payment terms with Apex?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "privacy",
+    "addendum"
+   ],
+   "expect": {
+    "min_sources": 2,
+    "must_cite": [
+     "privacy-policy.pdf",
+     "privacy-addendum-2026.pdf"
+    ],
+    "must_include_any": [
+     "7 years",
+     "3 years"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-conflict-retention",
+   "notes": "Conflicting provisions across policy and addendum.",
+   "query": "How long are customer records retained under the privacy policy?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "riverside",
+    "stale"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "lease-riverside.pdf"
+    ],
+    "must_include_any": [
+     "36 months"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-stale-version",
+   "notes": "Stale 2022 version present; current deed controls.",
+   "query": "What is the lock-in period in the Riverside lease deed?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "partnership"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "partnership-deed.pdf"
+    ],
+    "must_include_any": [
+     "Verma"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-parties",
+   "notes": "Party names and profit share.",
+   "query": "Who are the partners in the partnership deed and what is the profit share?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "board"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "board-minutes-march.pdf"
+    ],
+    "must_include_any": [
+     "Rs 12"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-dates",
+   "notes": "Date and amount lookup in minutes.",
+   "query": "What dividend did the March board meeting approve?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "sla"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "sla-cloud.pdf"
+    ],
+    "must_include_any": [
+     "99.9"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-sla",
+   "notes": "Uptime and service credit lookup.",
+   "query": "What uptime does the cloud SLA guarantee and what credit applies?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "itsec"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "it-security-procedure.pdf"
+    ],
+    "must_include_any": [
+     "multifactor"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-itsec",
+   "notes": "Procedure lookup: rotation and authentication.",
+   "query": "What are the password rotation and multifactor requirements?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "loan"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "loan-agreement.pdf"
+    ],
+    "must_include_any": [
+     "25000000"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-loan",
+   "notes": "Principal, interest and tenure lookup.",
+   "query": "What are the principal, interest and tenure of the term loan?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "insurance"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "group-insurance.pdf"
+    ],
+    "must_include_any": [
+     "1000000"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-insurance",
+   "notes": "Cover amount lookup.",
+   "query": "What is the group insurance cover amount?"
+  },
+  {
+   "category": "normal",
+   "documents": [
+    "consultancy"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "consultancy-agreement.pdf"
+    ],
+    "must_include_any": [
+     "200000"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-multiform",
+   "notes": "Complex question needing multiple retrieval formulations.",
+   "query": "What monthly retainer applies and who owns consultancy deliverables?"
+  },
+  {
+   "category": "comparison",
+   "documents": [
+    "riverside",
+    "harbour"
+   ],
+   "expect": {
+    "min_sources": 2,
+    "must_cite": [
+     "lease-harbourview.pdf",
+     "lease-riverside.pdf"
+    ],
+    "must_include_any": [
+     "24 months",
+     "36 months"
+    ],
+    "workflow": "comparison"
+   },
+   "id": "m-compare-leases",
+   "notes": "Two named leases, shared lock-in topic.",
+   "query": "Compare the lock-in and notice terms in lease-riverside.pdf and lease-harbourview.pdf."
+  },
+  {
+   "category": "summary",
+   "documents": [
+    "handbook"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "employee-handbook.pdf"
+    ],
+    "workflow": "summary"
+   },
+   "id": "m-summary-handbook",
+   "notes": "Multi-chunk summary evidence (6 chunks).",
+   "query": "Summarize employee-handbook.pdf."
+  },
+  {
+   "category": "summary",
+   "documents": [
+    "sla"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "sla-cloud.pdf"
+    ],
+    "workflow": "summary"
+   },
+   "id": "m-summary-sla",
+   "notes": "Short-document summary.",
+   "query": "Summarize sla-cloud.pdf."
+  },
+  {
+   "category": "extraction",
+   "documents": [
+    "riverside",
+    "harbour",
+    "maintenance",
+    "catering",
+    "offer",
+    "msa",
+    "vendoracme",
+    "apex"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_include_any": [
+     "months notice",
+     "days notice"
+    ],
+    "workflow": "extraction"
+   },
+   "id": "m-extract-notice",
+   "notes": "Deterministic table across many documents (10+ evidence).",
+   "query": "List all notice periods."
+  },
+  {
+   "category": "extraction",
+   "documents": [
+    "maintenance",
+    "consultancy",
+    "loan"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "service-maintenance.pdf"
+    ],
+    "must_include_any": [
+     "Rs 50000"
+    ],
+    "workflow": "extraction"
+   },
+   "id": "m-extract-amounts",
+   "notes": "Payment-amount extraction, filename scoped.",
+   "query": "Extract all payment amounts from service-maintenance.pdf."
+  },
+  {
+   "category": "ambiguous",
+   "documents": [
+    "harbour",
+    "riverside",
+    "maintenance"
+   ],
+   "expect": {
+    "min_sources": 0,
+    "workflow": "comparison"
+   },
+   "id": "m-ambiguous-compare",
+   "notes": "Comparison cue, three docs, no names: deterministic clarification.",
+   "query": "Compare the notice periods."
+  },
+  {
+   "category": "session-upload",
+   "documents": [
+    "leave"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_cite": [
+     "appointment-letter-session.pdf"
+    ],
+    "must_include_any": [
+     "Bangalore"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-session-joining",
+   "notes": "Session-scoped appointment letter question.",
+   "query": "When is the joining date in the appointment letter?",
+   "session_documents": [
+    {
+     "chunks": [
+      {
+       "page": 0,
+       "text": "Appointment letter for Rahul Sharma as Senior Analyst. Joining date is 2026-04-06 at the Bangalore office. Reporting manager is Priya Nair."
+      },
+      {
+       "page": 0,
+       "text": "The appointment is subject to background verification. Work location Bangalore, probation six months under the same terms as the offer letter."
+      }
+     ],
+     "file": "appointment-letter-session.pdf"
+    }
+   ]
+  },
+  {
+   "category": "followup",
+   "context": [
+    {
+     "content": "What is the lock-in period in the Riverside lease?",
+     "role": "user"
+    }
+   ],
+   "documents": [
+    "riverside"
+   ],
+   "expect": {
+    "min_sources": 1,
+    "must_include_any": [
+     "3 months"
+    ],
+    "workflow": "normal"
+   },
+   "id": "m-followup-notice",
+   "notes": "Short dependent follow-up anchored to prior question.",
+   "query": "And the notice period?"
+  },
+  {
+   "category": "unsupported",
+   "documents": [
+    "riverside"
+   ],
+   "expect": {
+    "min_sources": 0,
+    "workflow": "normal"
+   },
+   "id": "m-refusal",
+   "notes": "No retrieval, contextual refusal, no generation.",
+   "query": "What is the Martian terraforming budget?"
+  },
+  {
+   "category": "conversational",
+   "documents": [
+    "riverside"
+   ],
+   "expect": {
+    "min_sources": 0,
+    "workflow": "normal"
+   },
+   "id": "m-greeting",
+   "notes": "Routed reply under live arms.",
+   "query": "Hello"
+  },
+  {
+   "category": "comparison",
+   "documents": [
+    "harbour",
+    "riverside"
+   ],
+   "expect": {
+    "min_sources": 2,
+    "must_cite": [
+     "lease-harbourview.pdf",
+     "lease-riverside.pdf"
+    ],
+    "must_include_any": [
+     "Harbourview",
+     "Riverside"
+    ],
+    "workflow": "comparison"
+   },
+   "id": "m-compare-parties",
+   "notes": "Multi-document evidence comparison of parties.",
+   "query": "Compare the parties in lease-riverside.pdf and lease-harbourview.pdf."
+  }
+ ],
+ "documents": {
+  "addendum": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Addendum 2026-01 to the privacy policy. Clause 2 supersedes Section 8 of the privacy policy. Customer records are now retained for 3 years from account closure. Signed Meera Krishnan, Data Officer."
+    }
+   ],
+   "file": "privacy-addendum-2026.pdf"
+  },
+  "apex": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Vendor agreement with Apex Supplies dated 2025-11-02. Payment terms net-45 from invoice date. Late fee 2% per month on overdue balances. Delivery to the Whitefield warehouse."
+    },
+    {
+     "page": 1,
+     "text": "Apex support covers replacement of defective consignments within 15 days. Termination needs 30 days notice by either party."
+    }
+   ],
+   "file": "vendor-agreement-apex.pdf"
+  },
+  "audit": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Audit report for FY25. Total revenue Rs 450000000. The auditors record no qualification on the financial statements. Cash reserves stand at Rs 82000000."
+    }
+   ],
+   "file": "audit-report-fy25.pdf"
+  },
+  "board": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Board minutes of 2026-03-20. The board approved a dividend of Rs 12 per share for FY25. Next review is scheduled in June. Attendance: Rao, Menon, Dutta."
+    }
+   ],
+   "file": "board-minutes-march.pdf"
+  },
+  "catering": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Canteen catering contract for two years from 2025-06-01. Renewal needs 60 days notice before expiry. Monthly billing net-15 with a 1% late fee."
+    }
+   ],
+   "file": "service-catering.pdf"
+  },
+  "conduct": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Code of conduct, Section 1. Gifts from vendors above Rs 5000 must be declined and reported. Violations invite disciplinary review by the ethics panel."
+    }
+   ],
+   "file": "code-of-conduct.pdf"
+  },
+  "consultancy": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Consultancy agreement with Vega Advisors. Monthly retainer Rs 200000 payable in arrears. Either side may end the engagement with 30 days notice."
+    },
+    {
+     "page": 1,
+     "text": "Clause 5 assigns all intellectual property in deliverables to the company. The consultant retains no ownership over reports or software produced."
+    }
+   ],
+   "file": "consultancy-agreement.pdf"
+  },
+  "handbook": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Employee handbook, Chapter 1: onboarding. New joiners complete induction in week one. Probation lasts six months with monthly check-ins."
+    },
+    {
+     "page": 1,
+     "text": "Employee handbook, Chapter 2: leave. Annual leave is 24 days and sick leave is 12 days per Section 3.1 of the leave policy. Apply through the HR portal."
+    },
+    {
+     "page": 2,
+     "text": "Employee handbook, Chapter 3: conduct. Gifts above Rs 5000 must be declined per the code of conduct. Workplace harassment carries zero tolerance."
+    },
+    {
+     "page": 3,
+     "text": "Employee handbook, Chapter 4: insurance. Group insurance cover is Rs 1000000 per employee, premium paid by the employer each April."
+    },
+    {
+     "page": 4,
+     "text": "Employee handbook, Chapter 5: remote work. Hybrid schedule needs 3 days in office per the remote work policy. VPN use is mandatory offsite."
+    },
+    {
+     "page": 5,
+     "text": "Employee handbook, Chapter 6: separation. Notice period is three months for confirmed staff. Exit clearance needs manager and finance sign-off."
+    }
+   ],
+   "file": "employee-handbook.pdf"
+  },
+  "harbour": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Lease deed for Flat 9C, Harbourview Residency between Sara Iqbal and Harbourview Properties. Lock-in period is 24 months from 2025-03-01. Early exit needs 2 months notice."
+    },
+    {
+     "page": 1,
+     "text": "Harbourview maintenance is Rs 8000 monthly. Clause 7.2 bars subletting without written consent. Disputes go to arbitration in Mumbai."
+    }
+   ],
+   "file": "lease-harbourview.pdf"
+  },
+  "insurance": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Group insurance policy for all confirmed employees. Cover is Rs 1000000 per family. Premium is employer-paid and renewed every April."
+    }
+   ],
+   "file": "group-insurance.pdf"
+  },
+  "itsec": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "IT security procedure v3. Password rotation every 90 days is mandatory. Multifactor authentication is required for email, VPN and HR systems."
+    }
+   ],
+   "file": "it-security-procedure.pdf"
+  },
+  "leave": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Leave policy, Section 3.1. Every employee receives 24 days of annual leave per calendar year. Sick leave is 12 days with a medical certificate beyond 3 days."
+    },
+    {
+     "page": 1,
+     "text": "Leave policy, Section 3.4. Unused annual leave lapses after March. Notice for planned leave is 14 days to the reporting manager."
+    }
+   ],
+   "file": "leave-policy.pdf"
+  },
+  "loan": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Term loan agreement with Credence Bank. Principal Rs 25000000 at 9.5% annual interest. Tenure is 5 years with quarterly repayments from July."
+    }
+   ],
+   "file": "loan-agreement.pdf"
+  },
+  "maintenance": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Annual maintenance contract for the Koramangala facility. Service fee Rs 50000 per quarter covers all payment amounts due under this maintenance contract. Renewal is annual with 30 days notice before expiry."
+    }
+   ],
+   "file": "service-maintenance.pdf"
+  },
+  "msa": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Master services agreement with Nortel Systems. Liability is capped at Rs 10000000 per claim. Termination needs 90 days notice under Clause 11."
+    },
+    {
+     "page": 1,
+     "text": "The MSA renews annually unless ended with notice. Change requests need written approval from both programme managers."
+    }
+   ],
+   "file": "msa-techservices.pdf"
+  },
+  "nda": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Mutual non-disclosure agreement between Orion Labs and Datawise Inc. Clause 9.1 keeps confidentiality alive for 5 years after disclosure. Breach invites injunctive relief."
+    }
+   ],
+   "file": "nda-mutual.pdf"
+  },
+  "offer": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Offer of employment for Senior Analyst. Probation is 6 months. Annual CTC is Rs 1800000 with performance review each December."
+    }
+   ],
+   "file": "employment-offer-2025.pdf"
+  },
+  "partnership": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Partnership deed between Anita Verma and Farhan Khan. Profit share is 60/40 in favour of Verma. Capital contribution is equal at Rs 5000000 each."
+    }
+   ],
+   "file": "partnership-deed.pdf"
+  },
+  "privacy": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Privacy policy, Section 8. Customer records are retained for 7 years after account closure. Requests for deletion follow the grievance process."
+    }
+   ],
+   "file": "privacy-policy.pdf"
+  },
+  "remote": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Remote work policy, Section 2.4. Hybrid staff attend office 3 days each week. Core collaboration hours are 11am to 4pm IST."
+    }
+   ],
+   "file": "remote-work-policy.pdf"
+  },
+  "riverside": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Lease deed for Flat 4B, Riverside Enclave between Arjun Mehta and Riverside Estates. Lock-in period is 36 months from 2024-02-01. Early exit needs 3 months notice."
+    },
+    {
+     "page": 1,
+     "text": "Riverside maintenance is Rs 12000 monthly. Clause 7.2 bars subletting without written consent. Disputes go to arbitration in Bangalore."
+    }
+   ],
+   "file": "lease-riverside.pdf"
+  },
+  "sla": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Cloud hosting SLA. Uptime guarantee is 99.9% measured monthly. Service credit is 10% of the monthly fee for each breach. Critical response time is 4 hours."
+    }
+   ],
+   "file": "sla-cloud.pdf"
+  },
+  "stale": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Superseded Riverside lease draft of 2022. Stated a 48 months lock-in which no longer applies. Superseded by the registered deed of 2024-02-01."
+    }
+   ],
+   "file": "lease-riverside-2022-STALE.pdf"
+  },
+  "termination": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Termination letter template. Severance equals one month salary per completed year of service. Garden leave applies during the notice period."
+    }
+   ],
+   "file": "termination-letter-template.pdf"
+  },
+  "vendoracme": {
+   "chunks": [
+    {
+     "page": 0,
+     "text": "Vendor agreement with Acme Traders dated 2025-08-14. Payment terms net-30 from invoice date. Late fee 1.5% per month on overdue balances."
+    }
+   ],
+   "file": "vendor-agreement-acme.pdf"
+  }
+ },
+ "notes": "M-corpus: 25 synthetic company-style documents for live arm comparison. Frozen 2-doc baseline in cases.json is untouched.",
+ "version": 1
+}

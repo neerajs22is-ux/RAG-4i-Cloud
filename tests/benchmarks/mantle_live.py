@@ -23,6 +23,21 @@ EC2_USER_HOST = "ec2-user@3.90.188.164"
 BUDGET_CAP_USD = 8.0
 REMOTE_RUNNER = "python3 /tmp/mrun_live.py"
 
+# Benchmark revision "short01-remediation-v1", declared AFTER the
+# 2026-09-11 root-cause diagnosis and BEFORE the full benchmark.
+# - GPT-OSS emits hidden reasoning + answer inside ONE completion
+#   budget: the old 100-token answer cap truncated it to "" on RAG
+#   prompts (empties correlated 1:1 with usage_out == cap). Only the
+#   OSS answer role moves to 512; every other answer model stays 100.
+# - Structured helpers (planner/reviewer) move to a 15s client budget:
+#   server inference is ~1.4-2.8s but a fresh SSH exec per call costs
+#   ~6.2-7.7s round-trip, so the frozen 5s timed out client-side.
+BENCHMARK_REVISION = "short01-remediation-v1"
+OSS_ANSWER_MAX_TOKENS = 512
+DEFAULT_ANSWER_MAX_TOKENS = 100
+STRUCTURED_TIMEOUT_S = 15
+OSS_RUNTIME_IDS = frozenset({"openai.gpt-oss-120b-1:0"})
+
 # ap-south-1 $/1M (in, out), cross-checked 2026-09-11 against AWS
 # published regional tables. Labeled ESTIMATE in every report; token
 # counts are MEASURED per call.
@@ -227,7 +242,7 @@ class MantleChatProvider:
     """LLMProvider over Mantle Chat Completions (answer roles)."""
 
     def __init__(self, runtime_model_id, transport, tracker,
-                 temperature=0.0, max_tokens=100):
+                 temperature=0.0, max_tokens=None):
         if runtime_model_id not in MANTLE_IDS:
             raise ValueError("unresolved Mantle ID for %r: refusing to "
                              "guess" % (runtime_model_id,))
@@ -236,10 +251,19 @@ class MantleChatProvider:
         self.transport = transport
         self.tracker = tracker
         self.temperature = temperature
+        if max_tokens is None:
+            # Revision short01-remediation-v1: OSS answer role only.
+            max_tokens = OSS_ANSWER_MAX_TOKENS \
+                if runtime_model_id in OSS_RUNTIME_IDS \
+                else DEFAULT_ANSWER_MAX_TOKENS
         self.max_tokens = max_tokens
         self._reachable = False
         self._last_ttft_ms = None
         self._last_usage = None
+        # Bounded per-call diagnostics from the remote envelope
+        # (finish_reason / reasoning flag / usage / budget). Read by
+        # the isolation runners for trace metadata; never raw text.
+        self._last_diag = None
 
     @property
     def describe(self):
@@ -248,11 +272,11 @@ class MantleChatProvider:
     def _call(self, messages, stream, max_tokens=None):
         self.tracker.check(self.tracker.worst_call_cost(
             self.mantle_model_id))
+        used_max = self.max_tokens if max_tokens is None else max_tokens
         env = mantle_request(self.transport, {
             "model": self.mantle_model_id,
             "messages": messages,
-            "max_tokens": self.max_tokens if max_tokens is None
-            else max_tokens,
+            "max_tokens": used_max,
             "temperature": self.temperature,
             "stream": stream,
         })
@@ -267,6 +291,15 @@ class MantleChatProvider:
                     "transport_ms": env.get("transport_ms")},
             scenario_id=CTX.scenario_id, arm=CTX.arm, mode=CTX.mode,
             role="answer")
+        usage = env.get("usage") or {}
+        self._last_diag = {
+            "finish_reason": env.get("finish_reason"),
+            "has_reasoning": env.get("has_reasoning"),
+            "usage_in": usage.get("in"),
+            "usage_out": usage.get("out"),
+            "max_tokens": used_max,
+            "model": self.mantle_model_id,
+        }
         return env
 
     def generate(self, context, question, prompt_template):

@@ -1,0 +1,288 @@
+{
+ "arms": {
+  "ARM1": {
+   "answer": {
+    "api": "Responses API",
+    "auth": "SigV4 instance role + CreateInference (unverified live)",
+    "endpoint": "bedrock-mantle",
+    "endpoint_url": "https://bedrock-mantle.us-east-1.api.aws/openai/v1",
+    "entitlement": "UNCONFIRMED (prior Luna attempt: permission_denied)",
+    "iam": "role lacks Mantle/model rights; grant required",
+    "model_id": "openai.gpt-5.6-luna",
+    "price_per_1m": {
+     "in": 0.44,
+     "out": 1.98
+    },
+    "region": "us-east-1",
+    "streaming": "unknown-live"
+   },
+   "label": "FRONTIER VALUE",
+   "planner": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "reviewer": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   }
+  },
+  "ARM2": {
+   "answer": {
+    "api": "Converse",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "openai.gpt-oss-120b-1:0",
+    "note": "Mantle form openai.gpt-oss-120b proven working; runtime Converse entitlement unconfirmed",
+    "price_per_1m": {
+     "in": 0.15,
+     "out": 0.6
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "label": "OPEN-MODEL VALUE",
+   "planner": {
+    "block_reason": "google.gemma-4-26b-a4b is Mantle-only; current planner uses runtime Converse forced-tool (code change required, out of scope)",
+    "endpoint": "bedrock-mantle",
+    "model_id": "google.gemma-4-26b-a4b",
+    "status": "BLOCKED-implementation"
+   },
+   "reviewer": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   }
+  },
+  "ARM3": {
+   "answer": {
+    "block_reason": "qwen.qwen3-235b-a22b-2507-v1:0 exists only in ap-south-1; benchmark region is us-east-1; VL variant is a different model, no substitution",
+    "model_id": "qwen.qwen3-235b-a22b-2507-v1:0",
+    "status": "BLOCKED-region"
+   },
+   "label": "QWEN HEAVY",
+   "planner": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "reviewer": {
+    "block_reason": "same as answer: unavailable us-east-1",
+    "model_id": "qwen.qwen3-235b-a22b-2507-v1:0",
+    "status": "BLOCKED-region"
+   }
+  },
+  "ARM4": {
+   "answer": {
+    "api": "Converse",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "mistral.mistral-large-3-675b-instruct",
+    "price_per_1m": {
+     "in": 0.5,
+     "out": 1.5
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "label": "MISTRAL BALANCED",
+   "planner": {
+    "block_reason": "google.gemma-4-26b-a4b is Mantle-only; current planner uses runtime Converse forced-tool",
+    "endpoint": "bedrock-mantle",
+    "model_id": "google.gemma-4-26b-a4b",
+    "status": "BLOCKED-implementation"
+   },
+   "reviewer": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   }
+  },
+  "ARM5": {
+   "answer": {
+    "api": "Converse",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "mistral.devstral-2-123b",
+    "price_per_1m": {
+     "in": 0.4,
+     "out": 2.0
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "label": "SPECIALIST",
+   "planner": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "reviewer": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   }
+  },
+  "ARM6": {
+   "answer": {
+    "api": "Converse",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED (Mantle form proven working; runtime Converse unconfirmed)",
+    "iam": "grant required (InvokeModel on FM ARN)",
+    "model_id": "openai.gpt-oss-120b-1:0",
+    "price_per_1m": {
+     "in": 0.15,
+     "out": 0.6
+    },
+    "region": "us-east-1",
+    "streaming": true
+   },
+   "label": "BUDGET CHALLENGER",
+   "planner": {
+    "block_reason": "google.gemma-4-26b-a4b is Mantle-only; current planner uses runtime Converse forced-tool",
+    "endpoint": "bedrock-mantle",
+    "model_id": "google.gemma-4-26b-a4b",
+    "status": "BLOCKED-implementation"
+   },
+   "reviewer": {
+    "api": "Converse forced-tool",
+    "auth": "SigV4 instance role",
+    "endpoint": "bedrock-runtime",
+    "entitlement": "UNCONFIRMED",
+    "iam": "grant required",
+    "model_id": "qwen.qwen3-32b-v1:0",
+    "price_per_1m": {
+     "in": 0.1545,
+     "out": 0.618
+    },
+    "region": "us-east-1",
+    "streaming": true
+   }
+  }
+ },
+ "benchmark_seed": 74154,
+ "budget_cap_usd": 8.0,
+ "corpus": "cases_m.json",
+ "corpus_hash": "d2fc0c64ebf3",
+ "cost_estimate_usd": {
+  "assumptions": "worst case per scenario: answer+planner+reviewer+1 repair all fire (BLOCKED roles cost \\); 12 scenarios x1 rep; judge all 12 (10k in/0.5k out Nova); TTFT timed inline on streaming answer calls (zero extra calls); x2 = universal single same-model throttle retry; tiktoken estimates",
+  "judge": 0.01,
+  "per_arm_worst": {
+   "ARM1": 0.09,
+   "ARM2": 0.04,
+   "ARM3": 0.01,
+   "ARM4": 0.09,
+   "ARM5": 0.09,
+   "ARM6": 0.04
+  },
+  "total_worst": 0.74,
+  "within_cap": true
+ },
+ "gold_source": "scenarios_v1.json (unmodified; required_facts/forbidden_claims/expected_documents/workflows/support/clarification/scope/severity)",
+ "judge": {
+  "blinding": "model+provider+arm hidden; randomized order; fixed schema v1; validated output; UNVALIDATED until human calibration",
+  "endpoint": "bedrock-runtime",
+  "entitlement": "TENTATIVE (unconfirmed; verified by first judge call at run, counted in budget)",
+  "model_id": "amazon.nova-micro-v1:0",
+  "price_per_1m": {
+   "in": 0.035,
+   "out": 0.14
+  },
+  "region": "us-east-1",
+  "structured_output": "Converse tool use (Nova family supported per docs; first call confirms)"
+ },
+ "modes": [
+  "answer-isolation",
+  "planner-isolation",
+  "reviewer-isolation",
+  "limited-full-e2e"
+ ],
+ "notes": "Short exploratory run config. Original full spec (methodology, gates, trace format, $8 cap) unchanged. No paid calls made to produce this file.",
+ "repetitions": 1,
+ "scenarios": [
+  "S01-normal-lockin",
+  "S04-sla",
+  "S06-loan",
+  "S11-exact-clause",
+  "S16-compound",
+  "S21-compare-leases",
+  "S25-summary-handbook",
+  "S28-extract-notice",
+  "S18-neardup",
+  "S34-stale",
+  "S36-followup",
+  "S40-session"
+ ],
+ "storage_isolation": "harness DictStore is in-memory per run (no production vectors/S3/RDS writes by construction); session cases use fresh synthetic session IDs; teardown = process exit; production counts trivially unchanged"
+}

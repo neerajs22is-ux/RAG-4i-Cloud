@@ -165,6 +165,12 @@ def run_answer_isolation(answer_provider, snapshot, config=None,
         config=cfg, llm_provider=answer_provider,
         prompt_template=template)
     gen_ms = max(0, int((_t.monotonic() - t0) * 1000))
+    # Bounded adapter diagnostics (finish_reason / reasoning flag /
+    # token counts / budget). Doubles expose none -> None. Captured
+    # BEFORE the stream probe, which would overwrite provider state.
+    diag = getattr(answer_provider, "_last_diag", None)
+    if diag is not None:
+        diag = dict(diag)
     ttft_ms = None
     if stream_probe:
         _, stream_info = run_answer_model(answer_provider, snapshot,
@@ -172,7 +178,7 @@ def run_answer_isolation(answer_provider, snapshot, config=None,
         ttft_ms = stream_info["ttft_ms"]
     return {"answer": answer, "support_level": support.get("level"),
             "template": template[:60], "generation_ms": gen_ms,
-            "ttft_ms": ttft_ms,
+            "ttft_ms": ttft_ms, "diag": diag,
             "evidence_ids": [e.get("chunk_id")
                              for e in snapshot["evidence"]]}
 
@@ -197,8 +203,13 @@ def run_planner_isolation(planner_bundle, snapshot, store_files):
     plan, failure = validate_plan(
         raw, available_files=store_files,
         session_id=snapshot.get("session_id"))
+    # Preserve the transport-level outcome: when the client timeout
+    # fires, raw is None and the validator reports "schema", which
+    # previously masked the real TIMEOUT. The validator stays
+    # authoritative for schema_valid; call_failure is metadata only.
     return {"raw_type": type(raw).__name__, "plan": plan,
             "failure": failure, "latency_ms": latency_ms,
+            "call_failure": (call_meta or {}).get("failure"),
             "schema_valid": plan is not None and failure is None}
 
 
@@ -222,8 +233,12 @@ def run_reviewer_isolation(reviewer_bundle, snapshot, answer,
         latency_ms = max(0, int((time.monotonic() - t0) * 1000))
     from answer_reviewer import validate_verdict
     verdict, failure = validate_verdict(raw)
+    # Same TIMEOUT-preservation rule as the planner runner above:
+    # a timed-out call yields raw=None ("malformed" from the
+    # validator); call_failure keeps the real client-side outcome.
     return {"verdict": verdict, "failure": failure,
             "latency_ms": latency_ms,
+            "call_failure": (call_meta or {}).get("failure"),
             "schema_valid": verdict is not None and failure is None}
 
 

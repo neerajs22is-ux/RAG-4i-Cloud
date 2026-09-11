@@ -238,6 +238,53 @@ class TestIsolationRunners(unittest.TestCase):
         self.assertEqual(out["evidence_ids"],
                          [e["chunk_id"] for e in snap["evidence"]])
 
+    def test_answer_isolation_diag_defaults_none(self):
+        from tests.benchmarks.harness import EchoLLM
+        from tests.benchmarks.isolations import run_answer_isolation
+        snap = self._snap()
+        out = run_answer_isolation(EchoLLM(), snap, stream_probe=False)
+        self.assertIn("diag", out)
+        self.assertIsNone(out["diag"])
+
+    def test_planner_call_failure_propagated(self):
+        import time as _t
+        from query_planner import LLMQueryPlanner
+        from tests.benchmarks.isolations import run_planner_isolation
+        snap = self._snap()
+
+        def slow(prompt, schema):
+            _t.sleep(0.3)
+            return {}
+
+        bundle = {"planner": LLMQueryPlanner(slow, timeout_s=0.05),
+                  "provider": "d", "model": "n", "timeout_s": 0.05,
+                  "_meta_base": {}}
+        out = run_planner_isolation(
+            bundle, snap, sorted({e["file_name"] for e in snap["evidence"]
+                                  if e["file_name"]}))
+        self.assertFalse(out["schema_valid"])
+        self.assertEqual(out["call_failure"], "timeout")
+        self.assertEqual(out["failure"], "schema")
+
+    def test_reviewer_call_failure_propagated(self):
+        import time as _t
+        from answer_reviewer import LLMAnswerReviewer
+        from tests.benchmarks.isolations import run_reviewer_isolation
+        snap = self._snap()
+
+        def slow(prompt, schema):
+            _t.sleep(0.3)
+            return {}
+
+        bundle = {"reviewer": LLMAnswerReviewer(slow, timeout_s=0.05),
+                  "provider": "d", "model": "n", "timeout_s": 0.05,
+                  "_meta_base": {}}
+        out = run_reviewer_isolation(bundle, snap, "An answer.",
+                                     "normal")
+        self.assertFalse(out["schema_valid"])
+        self.assertEqual(out["call_failure"], "timeout")
+        self.assertEqual(out["failure"], "malformed")
+
 
 if __name__ == "__main__":
     unittest.main()

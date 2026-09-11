@@ -1,13 +1,34 @@
-# RAG-4i-Cloud (Phase 3 — S3 document storage second provider)
+# RAG-4i-Cloud (Phase 5 — cloud answer path + model benchmark)
 
-Provider-agnostic successor of the local `RAG-4i` CA Legal Assistant.
-Phase 1 refactored the app into providers (all local, same RAG behaviour).
-Phase 2 adds **PostgreSQL + pgvector (AWS RDS)** as a second Vector Store
-provider **alongside Chroma** — storage engine only. Embeddings, chunking,
-retrieval behaviour, prompt, and LM Studio are unchanged.
-Phase 3 adds **Amazon S3** as a second Document Storage provider
-**alongside local filesystem** — document storage layer only. The bucket
-stays private (Block Public Access, SSE-S3, versioned).
+Provider-agnostic Streamlit RAG assistant for CA legal documents, successor
+of the local `RAG-4i`. Phase 1 refactored the app into providers (all
+local, same RAG behaviour). Phase 2 adds **PostgreSQL + pgvector (AWS RDS)**
+as a second Vector Store provider **alongside Chroma** — storage engine
+only. Phase 3 adds **Amazon S3** as a second Document Storage provider
+**alongside local filesystem** (private bucket: Block Public Access,
+SSE-S3, versioned). Phase 4 deployed a hardened EC2 pilot. Phase 5 adds
+the cloud answer path — Bedrock provider, query planner, session scope and
+uploads, answer reviewer with bounded repair — plus a controlled model
+benchmark. **Benchmark work is ongoing; no production model has been
+selected.**
+
+## Status at a glance
+
+- **Production deployment:** none. What exists is a temporary EC2 pilot
+  (test documents only, no auth/HTTPS) — see *EC2 pilot deployment (Phase 4)*
+  below and `docs/CURRENT_STATE.md`.
+- **Working inference test path:** AWS Bedrock Mantle, ap-south-1 (Mumbai),
+  SigV4 from the EC2 instance role. Bedrock Converse is blocked for this
+  account (entitlement wall, not IAM) — see
+  `docs/SESSION_HANDOFF_2026-09-11.md`.
+- **Benchmark status:** short exploratory run complete (2026-09-11);
+  full 40-scenario run in progress. Results are exploratory, the judge has
+  not run, and short results are **not** the final production decision.
+- **Local defaults unchanged:** Chroma + MiniLM + LM Studio remain the
+  defaults; no model winner is hard-coded anywhere.
+- **Details live in `docs/`:** `CURRENT_STATE.md` (live/deployment state),
+  `SESSION_HANDOFF_2026-09-11.md` (benchmark continuation point),
+  `PHASE_HISTORY.md`, `PHASE_5_*.md`.
 
 ## Relationship to original RAG-4i
 
@@ -36,8 +57,13 @@ Application (app.py / backend.py)
 │   └── PostgreSQL/pgvector (postgres_vector_store.py) — AWS RDS
 ├── Embedding Provider (embeddings.py)
 │   └── Hugging Face MiniLM now, swappable
-└── LLM Provider (llm_provider.py)
-    └── LM Studio now (OpenAI-compatible), swappable
+├── Answer LLM Provider (llm_provider.py dispatches by LLM_PROVIDER)
+│   ├── LM Studio (default, OpenAI-compatible, local)
+│   └── Bedrock Converse (bedrock_provider.py, opt-in; ANSWER_MODEL_ID required)
+├── Session & Scope (document_scope.py, session_uploads.py, session_restore.py)
+├── Query Planner (query_planner.py, Phase 5D) — strict-JSON plan, validated
+├── Answer Reviewer (answer_reviewer.py, Phase 5E) — verdicts + bounded repair
+└── Benchmark harness (tests/benchmarks/, experimental; results uncommitted)
 ```
 
 `VECTOR_STORE=chroma` (default) or `VECTOR_STORE=postgres` selects the
@@ -62,6 +88,16 @@ Why each module exists:
   (PDFs → loader → chunker → embedder → PostgreSQL; Chroma never touched).
 - `compare_providers.py` — same query vs both providers (content/source/page/score).
 - `llm_provider.py` — wraps `ChatOpenAI`/LM Studio; owns base URL/key/model/temp.
+- `bedrock_provider.py` — Phase 5A answer provider (Bedrock Converse /
+  ConverseStream); opt-in via `LLM_PROVIDER=bedrock`, `ANSWER_MODEL_ID`
+  required (a missing ID fails loudly, never substitutes a model),
+  `BEDROCK_REGION` defaults to `us-east-1`.
+- `query_planner.py` — Phase 5D planner: strict-JSON plan proposals with a
+  deterministic validator (no unvalidated plan reaches retrieval).
+- `answer_reviewer.py` — Phase 5E reviewer: strict-JSON verdicts and
+  bounded repair (single attempt, frozen prompt; never rewrites freely).
+- `document_scope.py` / `session_uploads.py` / `session_restore.py` —
+  Phase 5B/5C per-session document scoping, uploads, and restore.
 - `backend.py` — orchestrates `retrieve_documents()` vs `generate_answer()`,
   structured sources `{source, file_name, page, score, ...}`, status helpers.
 - `app.py` — same Streamlit flow, real Environment/KB/LLM status, no offline claim.
@@ -208,6 +244,21 @@ temperature 0.0). Ordinary questions use the unchanged Q&A path.
   `t3.micro` box, no public URLs); the viewer is text from retrieved
   chunks, never raw filesystem paths.
 
+## Cloud answer path (Phase 5)
+
+Keeps the frozen RAG contract (same retrieval, prompt, citation rules) and
+adds, all behind the existing interfaces:
+
+- **5.0** architecture/evaluation foundation (`docs/PHASE_5_ARCHITECTURE.md`).
+- **5A** Bedrock answer provider (`LLM_PROVIDER=bedrock`, opt-in; local
+  LM Studio remains the default and nothing switches silently).
+- **5B/5C** per-session document scope, uploads, and scoped ingestion.
+- **5D** query planner: strict-JSON plan proposals, deterministically validated.
+- **5E** answer reviewer: strict-JSON verdicts with bounded repair.
+
+Provider/model/region settings for planner and reviewer are independent
+configuration (see `.env.example`); none is hard-coded to a model.
+
 ## PostgreSQL/pgvector (Phase 2)
 
 RDS stays **private** (no public access). Local development connects via SSH
@@ -297,10 +348,36 @@ restart-on-failure), `streamlit_config.toml` (port 8501), and
 - Load any local model (`LLM_MODEL` name is opaque to LM Studio).
 - Temperature `0.0` for precise, non-creative answers.
 
+## Model benchmark (experimental, not a production decision)
+
+`tests/benchmarks/` holds a controlled evaluation harness (frozen corpus,
+40 scenarios with gold answers, deterministic grader; continuation point in
+`docs/SESSION_HANDOFF_2026-09-11.md`). The current working inference test
+path is **AWS Bedrock Mantle, ap-south-1 (Mumbai)** via SigV4 from the EC2
+instance role — Bedrock Converse is blocked for this account (entitlement,
+not IAM).
+
+- Five arms compare Qwen3-32B/235B, GPT-OSS-120B, Mistral Large 3 and
+  Devstral 2 across planner/reviewer/answer roles. Several candidates
+  (e.g. Gemma 4 26B, Luna) were excluded for in-region availability or
+  entitlement reasons — see the handoff doc. Nothing below is a verdict.
+- `DRY_RUN=1 python tests/benchmarks/run_full.py` is the free local
+  pre-flight (doubles, writes to a separate `*-DRY` directory, no AWS).
+- Live runs are explicitly gated (`BENCHMARK_LIVE_BEDROCK=1`) and capped by
+  an $8 spend tracker checked before every call.
+- Status (2026-09-11): short exploratory run (`20260911-short01`) complete;
+  full run in progress — scenarios S01–S09 recorded, paused before S10.
+  Judge not run; **no final production model has been selected**.
+- Result artifacts stay uncommitted by policy under
+  `tests/benchmarks/results/`. `run_short.py` remains frozen as the
+  historical short01 runner.
+
 ## What is NOT implemented (later phases)
 
-Lambda, Bedrock, cloud GPUs, vLLM, Docker, Kubernetes, auth,
-multi-user permissions, OCR. Hybrid search/BM25, reranking, LLM query
+Lambda, cloud GPUs, vLLM, Docker, Kubernetes, auth,
+multi-user permissions, OCR. A production model rollout is also not
+implemented: the benchmark is ongoing and no winner has been selected.
+Hybrid search/BM25, reranking, LLM query
 rewriting, and router coverage hardening are scoped in
 `docs/adr-retrieval-upgrades.md` (deferred deliberately, not forgotten).
 (RDS PostgreSQL/pgvector second provider and EC2 SSH tunnel for local
@@ -312,8 +389,9 @@ access are covered above in Phase 2; RDS stays private.)
 python -m unittest discover -s tests -v
 ```
 
-Covers config, ingestion/chunking, metadata, retrieval, provider abstractions,
-and PostgreSQL (mocked). Heavy deps (Chroma/model/LLM server) are mocked or
+Covers config, ingestion/chunking, metadata, retrieval, provider
+abstractions, the Phase 5 planner/reviewer adapters, and benchmark harness
+logic. PostgreSQL is mocked. Heavy deps (Chroma/model/LLM server) are mocked or
 skipped so the suite runs without a GPU or server. The real-RDS test is
 opt-in only and needs the SSH tunnel up:
 

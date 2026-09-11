@@ -140,5 +140,56 @@ class TestRefreshPlumbing(unittest.TestCase):
             tr._refresh_if_due()
 
 
+class TestRemediationRevision(unittest.TestCase):
+    def test_revision_constants(self):
+        self.assertEqual(ML.BENCHMARK_REVISION, "short01-remediation-v1")
+        self.assertEqual(ML.OSS_ANSWER_MAX_TOKENS, 512)
+        self.assertEqual(ML.DEFAULT_ANSWER_MAX_TOKENS, 100)
+        self.assertEqual(ML.STRUCTURED_TIMEOUT_S, 15)
+
+    def test_oss_answer_budget_512(self):
+        p = ML.MantleChatProvider("openai.gpt-oss-120b-1:0",
+                                  FakeTransport(chat_envelope()),
+                                  ML.SpendTracker())
+        self.assertEqual(p.max_tokens, 512)
+
+    def test_other_answer_budgets_stay_100(self):
+        for mid in ("qwen.qwen3-32b-v1:0",
+                    "qwen.qwen3-235b-a22b-2507-v1:0",
+                    "mistral.mistral-large-3-675b-instruct",
+                    "mistral.devstral-2-123b"):
+            p = ML.MantleChatProvider(mid, FakeTransport(chat_envelope()),
+                                      ML.SpendTracker())
+            self.assertEqual(p.max_tokens, 100, mid)
+
+    def test_explicit_max_tokens_wins(self):
+        p = ML.MantleChatProvider("openai.gpt-oss-120b-1:0",
+                                  FakeTransport(chat_envelope()),
+                                  ML.SpendTracker(), max_tokens=100)
+        self.assertEqual(p.max_tokens, 100)
+
+    def test_diag_captured(self):
+        env = chat_envelope("hi", tin=7, tout=9)
+        env["finish_reason"] = "stop"
+        env["has_reasoning"] = True
+        tr = FakeTransport(env)
+        p = ML.MantleChatProvider("qwen.qwen3-32b-v1:0", tr,
+                                  ML.SpendTracker())
+        self.assertEqual(p.generate("c", "q", "{question}"), "hi")
+        self.assertEqual(p._last_diag["finish_reason"], "stop")
+        self.assertTrue(p._last_diag["has_reasoning"])
+        self.assertEqual(p._last_diag["usage_in"], 7)
+        self.assertEqual(p._last_diag["usage_out"], 9)
+        self.assertEqual(p._last_diag["max_tokens"], 100)
+
+    def test_diag_missing_fields_tolerated(self):
+        tr = FakeTransport(chat_envelope("hi"))
+        p = ML.MantleChatProvider("qwen.qwen3-32b-v1:0", tr,
+                                  ML.SpendTracker())
+        p.generate("c", "q", "{question}")
+        self.assertIsNone(p._last_diag["finish_reason"])
+        self.assertIsNone(p._last_diag["has_reasoning"])
+
+
 if __name__ == "__main__":
     unittest.main()

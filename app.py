@@ -740,6 +740,16 @@ def _handle_prompt(prompt_text):
         if is_empty_response(response_text):
             response_text = EMPTY_RESPONSE_MESSAGE
 
+        # Bounded groundedness gate (Step 6; flag-gated, default off).
+        # Disabled: no-op. Enabled: check -> ONE repair -> re-check over
+        # the SAME sources; failures preserve the assembled answer.
+        try:
+            from groundedness import maybe_verify_response
+            response_text = maybe_verify_response(
+                prompt_text, response_text, sources, cfg)
+        except Exception:
+            logger.warning("Groundedness gate failed open (see logs).")
+
         # Explicit retrieval status for document questions only;
         # routed replies (chat/out-of-scope) intentionally skip retrieval.
         notice = None

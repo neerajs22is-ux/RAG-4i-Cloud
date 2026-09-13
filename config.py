@@ -128,6 +128,10 @@ class AppConfig:
     reranking_enabled: str = "0"
     rerank_candidates: int = 64
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    # Bounded groundedness verification (Step 6; additive, default off):
+    # RAG_GROUNDEDNESS_ENABLED=1 adds check -> ONE repair -> re-check
+    # after answer assembly. Retrieval/rerank/prompts unchanged.
+    groundedness_enabled: str = "0"
     # PostgreSQL (Phase 2). Defaults point at the SSH tunnel
     # (localhost:15432 -> rag4i-db:5432); RDS itself stays private.
     database_url: str = ""
@@ -199,6 +203,7 @@ def load_config() -> AppConfig:
         rerank_candidates=_get_int("RAG_RERANK_CANDIDATES", 64),
         rerank_model=_get_str("RAG_RERANK_MODEL",
                               "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+        groundedness_enabled=_get_str("RAG_GROUNDEDNESS_ENABLED", "0"),
         database_url=_get_str("DATABASE_URL", ""),
         db_host=_get_str("DB_HOST", "localhost"),
         db_port=_get_int("DB_PORT", 15432),

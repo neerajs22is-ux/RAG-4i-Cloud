@@ -442,16 +442,24 @@ class PostgresVectorStore:
         return "dense"
 
     def _get_reranker(self):
-        """Injected reranker, else config-built (None when disabled)."""
+        """Injected reranker, else process-shared instance (None if off).
+
+        The shared instance means N stores trigger exactly one model
+        load per process; the startup warmup heats this same object.
+        """
         if self._reranker is not None or self._reranker_checked:
             return self._reranker
         self._reranker_checked = True
-        try:
-            from reranking import get_reranker
-        except ImportError:
+        cfg = self._config
+        on = False
+        if cfg is not None:
+            on = str(getattr(cfg, "reranking_enabled", "0") or "0"
+                     ).lower() in ("1", "true", "yes", "on")
+        if not on:
             return None
         try:
-            self._reranker = get_reranker(self._config)
+            from reranking import shared_reranker, shared_reranker_name
+            self._reranker = shared_reranker(shared_reranker_name(cfg))
         except Exception:
             self._reranker = None
         return self._reranker

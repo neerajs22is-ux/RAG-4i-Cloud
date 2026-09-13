@@ -50,3 +50,35 @@ def warmup(config=None) -> Dict:
                           "is unreachable."}
     return {"state": READY, "embeddings": embeddings, "llm": llm,
             "detail": "Model ready."}
+
+
+def warmup_reranker(config=None) -> Dict:
+    """Preload the reranker once per process (cold-load is ~18s on CPU).
+
+    Returns a disabled state WITHOUT loading any model when reranking
+    is off. Failures report unavailable without touching the
+    embeddings/LLM states. Call once at startup when
+    RAG_RERANKING_ENABLED=1 so the first user query never pays the
+    cold-load cost.
+    """
+    from reranking import get_reranker, shared_reranker
+    from reranking import shared_reranker_name
+
+    cfg = config
+    if cfg is None:
+        from config import get_config
+        cfg = get_config()
+    if get_reranker(cfg) is None:
+        return {"state": "disabled", "model": None, "latency_ms": 0}
+    # Warm the process-shared instance queries actually use (singleton).
+    rr = shared_reranker(shared_reranker_name(cfg))
+    _t0 = time.monotonic()
+    try:
+        rr.score("readiness probe", ["readiness probe"])
+        latency = max(0, int((time.monotonic() - _t0) * 1000))
+    except Exception as e:
+        logger.warning("Reranker warmup failed: %s", e)
+        return {"state": UNAVAILABLE,
+                "model": getattr(rr, "name", "?"), "latency_ms": None}
+    return {"state": READY, "model": getattr(rr, "name", "?"),
+            "latency_ms": latency}

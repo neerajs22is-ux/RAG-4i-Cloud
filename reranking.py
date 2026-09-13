@@ -97,3 +97,31 @@ def get_reranker(config=None, model_name=None):
     if name == OVERLAP_MODEL_NAME:
         return TokenOverlapReranker()
     return CrossEncoderReranker(name)
+
+
+_SHARED_RERANKERS = {}
+
+
+def shared_reranker(model_name=None):
+    """Process-shared scorer instance (one loaded model per process).
+
+    Separate PostgresVectorStore objects share the warmed model instead
+    of each loading its own copy (matters on small hosts like t3.micro).
+    Explicitly injected rerankers (tests) bypass this cache.
+    """
+    key = model_name or DEFAULT_MODEL
+    rr = _SHARED_RERANKERS.get(key)
+    if rr is None:
+        if key == OVERLAP_MODEL_NAME:
+            rr = TokenOverlapReranker()
+        else:
+            rr = CrossEncoderReranker(key)
+        _SHARED_RERANKERS[key] = rr
+    return rr
+
+
+def shared_reranker_name(config=None):
+    if config is None:
+        return DEFAULT_MODEL
+    return str(getattr(config, "rerank_model", DEFAULT_MODEL)
+               or DEFAULT_MODEL)

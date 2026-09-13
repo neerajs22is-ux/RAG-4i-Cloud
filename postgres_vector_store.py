@@ -50,6 +50,76 @@ def hnsw_drop_sql(table=TABLE, concurrently=True) -> str:
     cc = "CONCURRENTLY " if concurrently else ""
     return f"DROP INDEX {cc}IF EXISTS {name};"
 
+
+# Hybrid lexical retrieval (Step 4; additive, dense default unchanged).
+# A GENERATED ALWAYS STORED tsvector keeps existing rows covered with no
+# re-ingestion (Postgres backfills on ADD COLUMN) and stays in sync on
+# every insert. Same scope predicate guards both candidate sources.
+FTS_COLUMN = "content_tsv"
+HYBRID_DENSE_N = 20
+HYBRID_LEX_N = 20
+HYBRID_DEFAULT_DENSE_WEIGHT = 0.5
+
+
+def fts_index_name(table=TABLE) -> str:
+    return f"{str(table)}_content_tsv_gin"
+
+
+def fts_add_column_sql(table=TABLE) -> str:
+    return (
+        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {FTS_COLUMN} "
+        f"tsvector GENERATED ALWAYS AS "
+        f"(to_tsvector('english', content)) STORED;"
+    )
+
+
+def fts_create_index_sql(table=TABLE, concurrently=True) -> str:
+    cc = "CONCURRENTLY " if concurrently else ""
+    return (
+        f"CREATE INDEX {cc}IF NOT EXISTS {fts_index_name(table)} "
+        f"ON {table} USING gin ({FTS_COLUMN});"
+    )
+
+
+def fts_drop_sql(table=TABLE, concurrently=True) -> str:
+    """Rollback: drops the GIN index and the generated column (data kept)."""
+    cc = "CONCURRENTLY " if concurrently else ""
+    return (
+        f"DROP INDEX {cc}IF EXISTS {fts_index_name(table)}; "
+        f"ALTER TABLE {table} DROP COLUMN IF EXISTS {FTS_COLUMN};"
+    )
+
+
+def fuse_scores(dense, lexical, dense_weight=HYBRID_DEFAULT_DENSE_WEIGHT):
+    """Deterministic weighted fusion of two {chunk_id: score} maps.
+
+    Each side is min-max normalized to [0,1] (single-valued side maps
+    to 1.0; empty side contributes 0.0), then:
+        fused = w * dense_norm + (1 - w) * lexical_norm
+    Returns [(chunk_id, fused)] sorted by (-fused, chunk_id) so ties
+    break identically on every run.
+    """
+    try:
+        w = float(dense_weight)
+    except (TypeError, ValueError):
+        w = HYBRID_DEFAULT_DENSE_WEIGHT
+    w = min(1.0, max(0.0, w))
+
+    def _norm(m):
+        if not m:
+            return {}
+        vals = list(m.values())
+        lo, hi = min(vals), max(vals)
+        if hi <= lo:
+            return {k: 1.0 for k in m}
+        span = hi - lo
+        return {k: (v - lo) / span for k, v in m.items()}
+
+    dn, ln = _norm(dense), _norm(lexical)
+    fused = {cid: w * dn.get(cid, 0.0) + (1.0 - w) * ln.get(cid, 0.0)
+             for cid in set(dn) | set(ln)}
+    return sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))
+
 SCHEMA_SQL = """CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS chunks (
   chunk_id TEXT PRIMARY KEY,
@@ -195,8 +265,8 @@ class PostgresVectorStore:
             conn.close()
         return name
 
-    def hnsw_ready(self) -> bool | None:
-        """True if a valid HNSW index exists; None when DB unreachable."""
+    def _index_ready(self, name) -> bool | None:
+        """True if a valid index exists; None when DB unreachable."""
         try:
             conn = self._connect()
         except Exception:
@@ -208,13 +278,51 @@ class PostgresVectorStore:
                         "SELECT indisvalid FROM pg_index i "
                         "JOIN pg_class c ON c.oid = i.indexrelid "
                         "WHERE c.relname = %s",
-                        (hnsw_index_name(self.table),))
+                        (name,))
                     row = cur.fetchone()
                     return bool(row and row[0])
         except Exception:
             return False
         finally:
             conn.close()
+
+    def hnsw_ready(self) -> bool | None:
+        """True if a valid HNSW index exists; None when DB unreachable."""
+        return self._index_ready(hnsw_index_name(self.table))
+
+    def fts_ready(self) -> bool | None:
+        """True if a valid FTS GIN index exists; None when DB unreachable."""
+        return self._index_ready(fts_index_name(self.table))
+
+    def ensure_fts_index(self, concurrently=True) -> str:
+        """Additive FTS migration: generated tsvector column + GIN index.
+
+        The GENERATED ALWAYS column backfills existing rows (no
+        re-ingestion) and maintains itself on insert. Roll back with
+        drop_fts_index().
+        """
+        name = fts_index_name(self.table)
+        conn = self._autocommit_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(fts_add_column_sql(self.table))
+                cur.execute(fts_create_index_sql(self.table, concurrently))
+        finally:
+            conn.close()
+        return name
+
+    def drop_fts_index(self, concurrently=True) -> str:
+        """Rollback: drop the GIN index and generated column (data kept)."""
+        name = fts_index_name(self.table)
+        conn = self._autocommit_conn()
+        try:
+            with conn.cursor() as cur:
+                for stmt in fts_drop_sql(self.table, concurrently).split(";"):
+                    if stmt.strip():
+                        cur.execute(stmt + ";")
+        finally:
+            conn.close()
+        return name
 
     def build_index(self, chunks, session_id=None) -> int:
         """Insert chunks additively; existing rows kept (conflicts ignored).
@@ -229,9 +337,10 @@ class PostgresVectorStore:
         if not chunks:
             return 0
         self.ensure_schema()
-        # Index-only change: keep retrieval semantics identical while new
-        # chunks land on an HNSW-accelerated table (no re-ingest needed).
+        # Index-only changes: keep retrieval semantics identical while new
+        # chunks land on HNSW + FTS-indexed tables (no re-ingest needed).
         self.ensure_hnsw_index()
+        self.ensure_fts_index()
         # Validate scope upfront: loud failure before any embedding work.
         resolved = [resolve_chunk_scope(
             getattr(chunk, "metadata", {}) or {}, session_id)
@@ -276,32 +385,90 @@ class PostgresVectorStore:
             self.ensure_schema()
             return fn()
 
-    def search(self, query: str, k: int = 5, session_id=None):
+    def _dense_rows(self, qvec, session_id, limit):
+        """Raw dense candidate rows: (content, doc_id, src, fname, page,
+        chunk_id, dist). Shared by dense and hybrid paths."""
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content, document_id, source_path, file_name,"
+                    f" page, chunk_id, embedding <=> %s::vector AS dist "
+                    f"FROM {self.table} WHERE {SCOPE_PREDICATE} "
+                    f"ORDER BY dist ASC LIMIT %s",
+                    (qvec, session_id, limit),
+                )
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    def _lexical_rows(self, query, session_id, limit):
+        """Raw FTS candidate rows: (content, doc_id, src, fname, page,
+        chunk_id, rank). Same scope filter as dense (no leakage)."""
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content, document_id, source_path, file_name,"
+                    f" page, chunk_id, ts_rank_cd({FTS_COLUMN}, "
+                    f"plainto_tsquery('english', %s)) AS rank "
+                    f"FROM {self.table} "
+                    f"WHERE {FTS_COLUMN} @@ plainto_tsquery('english', %s) "
+                    f"AND {SCOPE_PREDICATE} "
+                    f"ORDER BY rank DESC LIMIT %s",
+                    (query, query, session_id, limit),
+                )
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _to_doc(content, doc_id, src, fname, page, cid):
+        return _Doc(content, {
+            "source_path": src, "source": src, "file_name": fname,
+            "page": page if isinstance(page, int) else None,
+            "document_id": doc_id, "chunk_id": cid,
+        })
+
+    def _resolve_mode(self, mode):
+        if mode is not None:
+            return str(mode).lower()
+        cfg = self._config
+        if cfg is not None:
+            return str(getattr(cfg, "retrieval_mode", "dense") or "dense"
+                       ).lower()
+        return "dense"
+
+    def _resolve_weight(self):
+        cfg = self._config
+        raw = getattr(cfg, "hybrid_dense_weight",
+                      HYBRID_DEFAULT_DENSE_WEIGHT) if cfg is not None \
+            else HYBRID_DEFAULT_DENSE_WEIGHT
+        try:
+            w = float(raw)
+        except (TypeError, ValueError):
+            w = HYBRID_DEFAULT_DENSE_WEIGHT
+        return min(1.0, max(0.0, w))
+
+    def search(self, query: str, k: int = 5, session_id=None, mode=None):
         """pgvector cosine search; returns [(doc, score)] with score in [-1,1].
 
         session_id None -> persistent-only; a valid id adds that session's
         rows (never another session's). Malformed IDs raise ValueError.
+        mode: None (config RAG_RETRIEVAL_MODE, default "dense"), "dense"
+        (unchanged single-path behavior), or "hybrid" (dense top-N +
+        FTS top-N fused deterministically, deduplicated by chunk_id).
         """
         if session_id is not None:
             from document_scope import validate_session_id
             validate_session_id(session_id)
         qvec = self._embedding().embed_query(query)
 
+        if self._resolve_mode(mode) == "hybrid":
+            return self._hybrid_search(query, qvec, k, session_id)
+
         def _run():
-            conn = self._connect()
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT content, document_id, source_path, file_name,"
-                        f" page, chunk_id, embedding <=> %s::vector AS dist "
-                        f"FROM {self.table} WHERE {SCOPE_PREDICATE} "
-                        f"ORDER BY dist ASC LIMIT %s",
-                        (qvec, session_id, k),
-                    )
-                    rows = cur.fetchall()
-            finally:
-                conn.close()
-            return rows
+            return self._dense_rows(qvec, session_id, k)
 
         rows = self._read_with_scope_retry(_run)
         out = []
@@ -310,12 +477,49 @@ class PostgresVectorStore:
                 score = 1.0 - float(dist)
             except (TypeError, ValueError):
                 score = None
-            out.append((_Doc(content, {
-                "source_path": src, "source": src, "file_name": fname,
-                "page": page if isinstance(page, int) else None,
-                "document_id": doc_id, "chunk_id": cid,
-            }), score))
+            out.append((self._to_doc(content, doc_id, src, fname, page, cid),
+                        score))
         return out
+
+    def _hybrid_search(self, query, qvec, k, session_id):
+        """Dense + FTS fusion. Same [(doc, score)] shape; scores in [0,1].
+
+        Both candidate sources share the scope predicate. Fused ranking
+        is deterministic: weighted normalized blend, ties by chunk_id.
+        """
+        def _dense():
+            return self._dense_rows(qvec, session_id, HYBRID_DENSE_N)
+
+        def _lex():
+            return self._lexical_rows(query, session_id, HYBRID_LEX_N)
+
+        dense_rows = self._read_with_scope_retry(_dense)
+        try:
+            lex_rows = self._read_with_scope_retry(_lex)
+        except Exception:
+            # Pre-FTS tables (column missing): degrade to dense candidates
+            # rather than failing the query. Dense errors still propagate
+            # exactly as in dense-only mode.
+            lex_rows = []
+
+        docs, dense, lex = {}, {}, {}
+        for content, doc_id, src, fname, page, cid, dist in dense_rows:
+            try:
+                dense[cid] = 1.0 - float(dist)
+            except (TypeError, ValueError):
+                continue
+            docs[cid] = self._to_doc(content, doc_id, src, fname, page, cid)
+        for content, doc_id, src, fname, page, cid, rank in lex_rows:
+            try:
+                lex[cid] = float(rank)
+            except (TypeError, ValueError):
+                continue
+            if cid not in docs:
+                docs[cid] = self._to_doc(content, doc_id, src, fname,
+                                         page, cid)
+        ranked = fuse_scores(dense, lex, self._resolve_weight())
+        return [(docs[cid], score) for cid, score in ranked[:k]
+                if cid in docs]
 
     def list_sources(self, limit: int = 50, session_id=None):
         """Distinct sources with a representative document_id each."""
@@ -416,7 +620,7 @@ class PostgresVectorStore:
         status = {"provider": "postgres", "ready": False, "exists": False,
                   "persist_directory": None, "table": self.table,
                   "chunk_count": None, "document_count": None,
-                  "hnsw_index": None}
+                  "hnsw_index": None, "fts_index": None}
         try:
             conn = self._connect()
         except Exception as e:
@@ -439,6 +643,7 @@ class PostgresVectorStore:
                     status["document_count"] = int(cur.fetchone()[0])
                     status["ready"] = status["chunk_count"] > 0
                     status["hnsw_index"] = self.hnsw_ready()
+                    status["fts_index"] = self.fts_ready()
         except Exception as e:
             status["error"] = str(e)
             status["ready"] = False

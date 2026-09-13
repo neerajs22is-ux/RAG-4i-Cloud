@@ -115,6 +115,12 @@ class AppConfig:
     chunk_overlap: int = 200
     retrieval_k: int = 5
     relevance_threshold: float = 0.3
+    # Retrieval mode (postgres hybrid; additive, default preserves behavior):
+    # RAG_RETRIEVAL_MODE=dense (default: unchanged dense-only retrieval) or
+    # hybrid (dense + PostgreSQL FTS fusion inside PostgresVectorStore).
+    # RAG_HYBRID_DENSE_WEIGHT blends fused scores: w*dense + (1-w)*lexical.
+    retrieval_mode: str = "dense"
+    hybrid_dense_weight: float = 0.5
     # PostgreSQL (Phase 2). Defaults point at the SSH tunnel
     # (localhost:15432 -> rag4i-db:5432); RDS itself stays private.
     database_url: str = ""
@@ -180,6 +186,8 @@ def load_config() -> AppConfig:
         chunk_overlap=_get_int("CHUNK_OVERLAP", 200),
         retrieval_k=_get_int("RETRIEVAL_K", 5),
         relevance_threshold=_get_float("RELEVANCE_THRESHOLD", 0.3),
+        retrieval_mode=_get_str("RAG_RETRIEVAL_MODE", "dense"),
+        hybrid_dense_weight=_get_float("RAG_HYBRID_DENSE_WEIGHT", 0.5),
         database_url=_get_str("DATABASE_URL", ""),
         db_host=_get_str("DB_HOST", "localhost"),
         db_port=_get_int("DB_PORT", 15432),

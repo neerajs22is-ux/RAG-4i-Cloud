@@ -55,7 +55,10 @@ def run_cloud_scenario(scenario, *, config, vector_store, llm_provider):
     sess_docs = sess.get("documents") or []
     if sess_docs:
         sid = new_session_id()
-        objs = _session_chunks(sess_docs, prefix="bench-session")
+        # Chunk ids embed the session id: repeated runs must not collide
+        # with earlier bindings via ON CONFLICT DO NOTHING (a fresh sid
+        # matching zero stale rows would blind the session read).
+        objs = _session_chunks(sess_docs, prefix=f"bench-session-{sid[:8]}")
         if not objs:
             raise ValueError("session scenario has no indexable chunks")
         vector_store.build_index(objs, session_id=sid)

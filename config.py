@@ -121,6 +121,13 @@ class AppConfig:
     # RAG_HYBRID_DENSE_WEIGHT blends fused scores: w*dense + (1-w)*lexical.
     retrieval_mode: str = "dense"
     hybrid_dense_weight: float = 0.5
+    # Recall-then-rerank (Step 5; additive, default preserves behavior):
+    # RAG_RERANKING_ENABLED=1 reranks broad candidates before final top-k.
+    # RAG_RERANK_CANDIDATES broad pool size; final k unchanged (retrieval_k).
+    # RAG_RERANK_MODEL cross-encoder id, or "overlap" (offline fallback).
+    reranking_enabled: str = "0"
+    rerank_candidates: int = 64
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     # PostgreSQL (Phase 2). Defaults point at the SSH tunnel
     # (localhost:15432 -> rag4i-db:5432); RDS itself stays private.
     database_url: str = ""
@@ -188,6 +195,10 @@ def load_config() -> AppConfig:
         relevance_threshold=_get_float("RELEVANCE_THRESHOLD", 0.3),
         retrieval_mode=_get_str("RAG_RETRIEVAL_MODE", "dense"),
         hybrid_dense_weight=_get_float("RAG_HYBRID_DENSE_WEIGHT", 0.5),
+        reranking_enabled=_get_str("RAG_RERANKING_ENABLED", "0"),
+        rerank_candidates=_get_int("RAG_RERANK_CANDIDATES", 64),
+        rerank_model=_get_str("RAG_RERANK_MODEL",
+                              "cross-encoder/ms-marco-MiniLM-L-6-v2"),
         database_url=_get_str("DATABASE_URL", ""),
         db_host=_get_str("DB_HOST", "localhost"),
         db_port=_get_int("DB_PORT", 15432),

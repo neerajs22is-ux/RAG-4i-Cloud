@@ -165,7 +165,7 @@ class PostgresVectorStore:
     """pgvector implementation of the VectorStore interface."""
 
     def __init__(self, dsn=None, config=None, embedding_provider=None,
-                 embedding_function=None, table=TABLE):
+                   embedding_function=None, table=TABLE, reranker=None):
         if dsn is None and config is not None:
             dsn = config.postgres_dsn()
         self.dsn = dsn or ""
@@ -173,6 +173,8 @@ class PostgresVectorStore:
         self._provider = embedding_provider
         self._embedding_function = embedding_function
         self._config = config
+        self._reranker = reranker
+        self._reranker_checked = False
 
     def _embedding(self):
         if self._embedding_function is not None:
@@ -439,6 +441,39 @@ class PostgresVectorStore:
                        ).lower()
         return "dense"
 
+    def _get_reranker(self):
+        """Injected reranker, else config-built (None when disabled)."""
+        if self._reranker is not None or self._reranker_checked:
+            return self._reranker
+        self._reranker_checked = True
+        try:
+            from reranking import get_reranker
+        except ImportError:
+            return None
+        try:
+            self._reranker = get_reranker(self._config)
+        except Exception:
+            self._reranker = None
+        return self._reranker
+
+    def _resolve_rerank(self, rerank):
+        if rerank is not None:
+            return bool(rerank)
+        cfg = self._config
+        if cfg is None:
+            return False
+        return str(getattr(cfg, "reranking_enabled", "0") or "0").lower() \
+            in ("1", "true", "yes", "on")
+
+    def _resolve_candidate_count(self):
+        cfg = self._config
+        try:
+            n = int(getattr(cfg, "rerank_candidates", 64)
+                    if cfg is not None else 64)
+        except (TypeError, ValueError):
+            n = 64
+        return max(1, n)
+
     def _resolve_weight(self):
         cfg = self._config
         raw = getattr(cfg, "hybrid_dense_weight",
@@ -450,7 +485,8 @@ class PostgresVectorStore:
             w = HYBRID_DEFAULT_DENSE_WEIGHT
         return min(1.0, max(0.0, w))
 
-    def search(self, query: str, k: int = 5, session_id=None, mode=None):
+    def search(self, query: str, k: int = 5, session_id=None, mode=None,
+               rerank=None):
         """pgvector cosine search; returns [(doc, score)] with score in [-1,1].
 
         session_id None -> persistent-only; a valid id adds that session's
@@ -458,11 +494,19 @@ class PostgresVectorStore:
         mode: None (config RAG_RETRIEVAL_MODE, default "dense"), "dense"
         (unchanged single-path behavior), or "hybrid" (dense top-N +
         FTS top-N fused deterministically, deduplicated by chunk_id).
+        rerank: None (config RAG_RERANKING_ENABLED, default off), True
+        (broad candidates -> reranker -> final top-k), False (never).
+        Reranked scores are min-max normalized to [0,1] so the unchanged
+        backend threshold still makes the final relevance decision;
+        candidates themselves are never pre-thresholded (recall first).
         """
         if session_id is not None:
             from document_scope import validate_session_id
             validate_session_id(session_id)
         qvec = self._embedding().embed_query(query)
+
+        if self._resolve_rerank(rerank):
+            return self._reranked_search(query, qvec, k, session_id, mode)
 
         if self._resolve_mode(mode) == "hybrid":
             return self._hybrid_search(query, qvec, k, session_id)
@@ -520,6 +564,61 @@ class PostgresVectorStore:
         ranked = fuse_scores(dense, lex, self._resolve_weight())
         return [(docs[cid], score) for cid, score in ranked[:k]
                 if cid in docs]
+
+    def _reranked_search(self, query, qvec, k, session_id, mode):
+        """Recall broad candidates -> reranker -> final top-k [(doc, score)].
+
+        Candidates come from the SAME retrieval implementation (dense, or
+        dense+lexical union when hybrid): no second retrieval path, same
+        scope predicate on every source. Scores min-max normalized to
+        [0,1], ordered deterministically by (-score, chunk_id).
+        """
+        n = max(self._resolve_candidate_count(), k)
+
+        def _dense():
+            return self._dense_rows(qvec, session_id, n)
+
+        dense_rows = self._read_with_scope_retry(_dense)
+        lex_rows = []
+        if self._resolve_mode(mode) == "hybrid":
+            def _lex():
+                return self._lexical_rows(query, session_id, n)
+            try:
+                lex_rows = self._read_with_scope_retry(_lex)
+            except Exception:
+                lex_rows = []
+
+        docs, order = {}, []
+        for row in list(dense_rows) + list(lex_rows):
+            content, doc_id, src, fname, page, cid = row[:6]
+            if cid not in docs:
+                docs[cid] = self._to_doc(content, doc_id, src, fname,
+                                         page, cid)
+                order.append(cid)
+        if not docs:
+            return []
+        reranker = self._get_reranker()
+        if reranker is None:
+            # Enabled flag with no usable scorer: fail loud, never silently
+            # return unranked candidates as if reranked.
+            raise RuntimeError(
+                "Reranking enabled but no reranker available "
+                "(missing model or dependency).")
+        raw = reranker.score(query, [docs[cid].page_content
+                                     for cid in order])
+        if len(raw) != len(order):
+            raise RuntimeError("Reranker returned scores for "
+                               f"{len(raw)} of {len(order)} candidates.")
+        vals = [float(s) for s in raw]
+        lo, hi = min(vals), max(vals)
+        if hi <= lo:
+            norm = {cid: 1.0 for cid in order}
+        else:
+            span = hi - lo
+            norm = {cid: (v - lo) / span
+                    for cid, v in zip(order, vals)}
+        ranked = sorted(norm.items(), key=lambda kv: (-kv[1], kv[0]))
+        return [(docs[cid], score) for cid, score in ranked[:k]]
 
     def list_sources(self, limit: int = 50, session_id=None):
         """Distinct sources with a representative document_id each."""

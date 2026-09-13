@@ -199,6 +199,39 @@ def citation_guard(answer: str, retrieved: List[Dict]) -> Dict:
 
 CLARIFICATION_MARKER = "Quick check before I answer:"
 
+# Clarification precision (Step 14): PARTIAL answers clarify only when a
+# substantial share of the checkable terms is missing. A single missing
+# verb-form term (applies/require/grant) against otherwise strong,
+# specific evidence answers directly. UNSUPPORTED and already-clarified
+# behavior are untouched by this threshold.
+CLARIFICATION_MISSING_RATIO = 0.5
+
+
+def needs_clarification(support, question=None) -> bool:
+    """True when PARTIAL support warrants one deterministic clarification.
+
+    Two independent triggers (either suffices):
+    1. Ratio: at least half the checkable terms are missing (vague or
+       weakly evidenced requests still clarify).
+    2. Ungrounded user words: none of the user's own literal terms are
+       covered (e.g. a bare follow-up whose only new word matches
+       nothing) -- the request is ambiguous even when expanded context
+       terms match. Specific requests with mostly covered terms answer
+       directly instead of stalling on one verb-form gap.
+    """
+    missing = (support or {}).get("missing") or []
+    terms = (support or {}).get("terms") or []
+    if not missing or not terms:
+        return False
+    if len(missing) / len(terms) >= CLARIFICATION_MISSING_RATIO:
+        return True
+    if question:
+        covered = set((support or {}).get("covered") or [])
+        user_terms = content_terms(question)
+        if user_terms and all(t not in covered for t in user_terms):
+            return True
+    return False
+
 _CONFIRMATIONS = {
     "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "proceed",
     "go ahead", "answer anyway", "please do", "yes please", "do it",

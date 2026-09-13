@@ -487,10 +487,10 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     raise ValueError here, before any retrieval work.
     """
     from answer_support import (DIRECT, PARTIAL, UNSUPPORTED,
-                                assess_support, build_clarification,
-                                detect_broad_scope,
-                                resolve_effective_question,
-                                unsupported_reply)
+                                 assess_support, build_clarification,
+                                 detect_broad_scope, needs_clarification,
+                                 resolve_effective_question,
+                                 unsupported_reply)
     from document_scope import validate_session_id
     from embeddings import get_embedding_provider
     from llm_provider import get_llm_provider
@@ -578,7 +578,8 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
                             "support_ms": _support_ms,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     if (support["level"] == PARTIAL and support.get("missing")
-            and not already_clarified):
+            and not already_clarified
+            and needs_clarification(support, query_text)):
         _support_ms = _ms(_s0, time.monotonic())
         return {"failed": False,
                 "answer": build_clarification(

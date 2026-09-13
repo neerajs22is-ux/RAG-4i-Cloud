@@ -15,6 +15,41 @@ Conforms to the same `VectorStore` interface as `ChromaVectorStore`
 TABLE = "chunks"
 DIM = 384
 
+# HNSW retrieval index (Step 3; infrastructure/indexing only).
+# The retrieval query uses cosine distance (`embedding <=> %s::vector`),
+# so the operator class MUST be vector_cosine_ops. No query, scoring,
+# k, threshold, filter, or embedding semantics change with this index.
+HNSW_M = 16
+HNSW_EF_CONSTRUCTION = 64
+
+
+def hnsw_index_name(table=TABLE) -> str:
+    """Deterministic per-table HNSW index name."""
+    return f"{str(table)}_embedding_hnsw"
+
+
+def hnsw_create_sql(table=TABLE, concurrently=True) -> str:
+    """CREATE for the HNSW index (production form uses CONCURRENTLY).
+
+    CONCURRENTLY avoids write/read locks on the live RDS table but
+    cannot run inside a transaction block — callers must use an
+    autocommit connection (see ensure_hnsw_index).
+    """
+    name = hnsw_index_name(table)
+    cc = "CONCURRENTLY " if concurrently else ""
+    return (
+        f"CREATE INDEX {cc}IF NOT EXISTS {name} "
+        f"ON {table} USING hnsw (embedding vector_cosine_ops) "
+        f"WITH (m = {HNSW_M}, ef_construction = {HNSW_EF_CONSTRUCTION});"
+    )
+
+
+def hnsw_drop_sql(table=TABLE, concurrently=True) -> str:
+    """Rollback path: drops only the HNSW index, never table data."""
+    name = hnsw_index_name(table)
+    cc = "CONCURRENTLY " if concurrently else ""
+    return f"DROP INDEX {cc}IF EXISTS {name};"
+
 SCHEMA_SQL = """CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS chunks (
   chunk_id TEXT PRIMARY KEY,
@@ -79,11 +114,15 @@ class PostgresVectorStore:
         self._provider = get_embedding_provider(self._config)
         return self._provider.get_embedding_function()
 
-    def _connect(self):
+    def _connect(self, autocommit=False):
         import psycopg2
         from pgvector.psycopg2 import register_vector
 
         conn = psycopg2.connect(self.dsn)
+        if autocommit:
+            # Must precede any statement (incl. register_vector): CONCURRENTLY
+            # index builds cannot run inside a transaction block.
+            conn.set_session(autocommit=True)
         try:
             register_vector(conn)
         except Exception:
@@ -109,6 +148,74 @@ class PostgresVectorStore:
         return "does not exist" in text and (
             "scope" in text or "session_id" in text)
 
+    def _autocommit_conn(self):
+        """Connection safe for CONCURRENTLY index DDL.
+
+        Prefers _connect(autocommit=True) (autocommit precedes every
+        statement); falls back for _connect overrides without the flag.
+        """
+        try:
+            return self._connect(autocommit=True)
+        except TypeError:
+            conn = self._connect()
+            try:
+                conn.set_session(autocommit=True)
+            except Exception:
+                try:
+                    conn.autocommit = True
+                except Exception:
+                    pass
+            return conn
+
+    def ensure_hnsw_index(self, concurrently=True) -> str:
+        """Create the HNSW index if missing; returns the index name.
+
+        Additive only: never touches table data, no re-ingestion needed.
+        CONCURRENTLY (production default) requires autocommit, so this
+        uses a dedicated connection outside any transaction block.
+        Roll back with drop_hnsw_index().
+        """
+        name = hnsw_index_name(self.table)
+        conn = self._autocommit_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(hnsw_create_sql(self.table, concurrently))
+        finally:
+            conn.close()
+        return name
+
+    def drop_hnsw_index(self, concurrently=True) -> str:
+        """Rollback: drop only the HNSW index. Data is never touched."""
+        name = hnsw_index_name(self.table)
+        conn = self._autocommit_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(hnsw_drop_sql(self.table, concurrently))
+        finally:
+            conn.close()
+        return name
+
+    def hnsw_ready(self) -> bool | None:
+        """True if a valid HNSW index exists; None when DB unreachable."""
+        try:
+            conn = self._connect()
+        except Exception:
+            return None
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT indisvalid FROM pg_index i "
+                        "JOIN pg_class c ON c.oid = i.indexrelid "
+                        "WHERE c.relname = %s",
+                        (hnsw_index_name(self.table),))
+                    row = cur.fetchone()
+                    return bool(row and row[0])
+        except Exception:
+            return False
+        finally:
+            conn.close()
+
     def build_index(self, chunks, session_id=None) -> int:
         """Insert chunks additively; existing rows kept (conflicts ignored).
 
@@ -122,6 +229,9 @@ class PostgresVectorStore:
         if not chunks:
             return 0
         self.ensure_schema()
+        # Index-only change: keep retrieval semantics identical while new
+        # chunks land on an HNSW-accelerated table (no re-ingest needed).
+        self.ensure_hnsw_index()
         # Validate scope upfront: loud failure before any embedding work.
         resolved = [resolve_chunk_scope(
             getattr(chunk, "metadata", {}) or {}, session_id)
@@ -305,7 +415,8 @@ class PostgresVectorStore:
     def get_status(self) -> dict:
         status = {"provider": "postgres", "ready": False, "exists": False,
                   "persist_directory": None, "table": self.table,
-                  "chunk_count": None, "document_count": None}
+                  "chunk_count": None, "document_count": None,
+                  "hnsw_index": None}
         try:
             conn = self._connect()
         except Exception as e:
@@ -327,6 +438,7 @@ class PostgresVectorStore:
                         f") d")
                     status["document_count"] = int(cur.fetchone()[0])
                     status["ready"] = status["chunk_count"] > 0
+                    status["hnsw_index"] = self.hnsw_ready()
         except Exception as e:
             status["error"] = str(e)
             status["ready"] = False

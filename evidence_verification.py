@@ -18,11 +18,21 @@ digit grouping) recognizes semantic equivalence, while numbers,
 dates, units, negations, qualifiers, and entity names stay distinct.
 The generated answer is NEVER treated as evidence.
 
+BOUNDED CORRECTION (Step 3.2): one verdict-gated corrective search.
+warrants_correction decides deterministically; corrective_query builds
+a focused query from unresolved numbers/quoted spans/constraints and
+disputed values (never invented); merge_evidence dedupes with
+provenance (retrieval_round 1/2, cap 10); the verifier runs exactly
+once more, then the process STOPS. Controllable-RAG-Agent's
+retrieve-vs-answer task decision and NVIDIA's bounded verification
+gate are the harvested patterns, adapted to deterministic form.
+
 Failure is fail-open (mirrors the groundedness gate): any internal
 error yields sufficient=True with reason "verdict-error" so the
-existing answer path keeps working. Bounds: no re-search, no loops,
-no model calls; DECOMPOSE plans are verified per subquery against
-the SAME evidence (fan-out remains deferred by design).
+existing answer path keeps working. Bounds: one corrective round,
+one re-verification, no loops, no model calls; DECOMPOSE plans are
+verified per subquery against the SAME evidence (fan-out remains
+deferred by design).
 """
 
 import logging
@@ -125,7 +135,8 @@ def _chunk_norms(sources):
             "toks": set(_tokens(content)),
             "ref": {"chunk_id": s.get("chunk_id"),
                     "file_name": s.get("file_name"),
-                    "page": s.get("page")},
+                    "page": s.get("page"),
+                    "retrieval_round": s.get("retrieval_round", 1)},
         })
     return out
 
@@ -288,3 +299,153 @@ def verify_evidence(question, sources, plan=None, constraints=None):
                 "unsupported_claims": [], "conflicting_claims": [],
                 "evidence_refs": [], "subqueries": [], "confidence": "low",
                 "reason": "verifier-error", "verification_required": False}
+
+
+# ---------- bounded correction (one round, then STOP) ---------- #
+
+MAX_CORRECTION_ROUNDS = 1
+MAX_CORRECTIVE_QUERY_CHARS = 200
+MERGED_EVIDENCE_CAP = 10
+CORRECTABLE_REASONS = frozenset({"insufficient-evidence",
+                                 "conflicting-evidence"})
+
+
+def warrants_correction(question, verdict):
+    """Deterministic policy: is ONE corrective search meaningful?
+
+    Insufficient/conflicting evidence warrants it (a focused query may
+    surface the missing or clarifying chunk). Disjoint/unsupported
+    evidence warrants it ONLY for exact-matchable anchors (numbers or
+    quoted spans the FTS path can hit); vague requests never re-search.
+    No-evidence and verdict errors never re-search.
+    """
+    if not isinstance(verdict, dict):
+        return False
+    reason = verdict.get("reason")
+    if reason in CORRECTABLE_REASONS:
+        return True
+    if reason == "unsupported-claims":
+        q = str(question or "")
+        return bool(extract_numbers(q) or _QUOTED_RE.search(q))
+    return False
+
+
+def corrective_query(question, verdict, constraints=None):
+    """Build ONE focused retrieval query from unresolved items.
+
+    Uses only numbers/quoted spans/constraints missing from evidence,
+    disputed values, and already-supported context terms. Never invents
+    terms. Returns None when no meaningful query exists.
+    """
+    if not isinstance(verdict, dict):
+        return None
+    supported = {_norm(t) for t in verdict.get("supported_claims", [])}
+    spans = []
+    for num in extract_numbers(question):
+        if _norm(num) not in supported:
+            spans.append(num)
+    for m in _QUOTED_RE.findall(str(question or "")):
+        span = (m[0] or m[1]).strip()
+        if span and _norm(span) not in supported:
+            spans.append(span)
+    for c in (constraints or []):
+        if _norm(c) not in supported:
+            spans.append(str(c))
+    for item in verdict.get("conflicting_claims", []) or []:
+        m = re.match(r"^conflicting (.*?): (.*)$", str(item))
+        if m:
+            unit = m.group(1).strip()
+            if unit and unit != "value":
+                spans.append(unit)
+            for val in m.group(2).split(" vs "):
+                spans.append(val.strip())
+    for cue in sorted(NEGATION_CUES):
+        if re.search(r"\b" + re.escape(cue) + r"\b",
+                     str(question or "").lower()) \
+                and cue not in " ".join(spans).lower():
+            spans.append(cue)
+    for text in verdict.get("supported_claims", [])[:2]:
+        if text not in spans:
+            spans.append(text)
+    query = re.sub(r"\s+", " ",
+                   " ".join(s for s in spans if s)).strip()
+    query = query[:MAX_CORRECTIVE_QUERY_CHARS].strip()
+    if not query or _norm(query) == _norm(question):
+        return None
+    return query
+
+
+def merge_evidence(original, corrective, cap=MERGED_EVIDENCE_CAP):
+    """Union with provenance; dedupe by chunk_id; bounded size.
+
+    Returns (merged, gained_chunk_ids). Inputs are never mutated.
+    """
+    merged = []
+    seen = set()
+    for d, rnd in ((original or [], 1), (corrective or [], 2)):
+        for s in d:
+            if not isinstance(s, dict):
+                continue
+            cid = s.get("chunk_id") or id(s)
+            if cid in seen:
+                continue
+            seen.add(cid)
+            row = dict(s)
+            row["retrieval_round"] = rnd
+            merged.append(row)
+            if len(merged) >= cap:
+                break
+        if len(merged) >= cap:
+            break
+    gained = [s["chunk_id"] for s in merged
+              if s.get("retrieval_round") == 2]
+    return merged, gained
+
+
+def run_bounded_correction(question, initial_sources, retrieve_fn,
+                           plan=None, constraints=None):
+    """Verify, at most ONE correction round, re-verify, STOP.
+
+    retrieve_fn(query) -> list of structured sources (the frozen
+    pipeline). Returns (final_sources, verification). The verification
+    carries a "correction" record with triggered/rounds/verifications
+    counts so bounds are auditable. Never raises, never loops.
+    """
+    def _record(verdict, **kw):
+        rec = {"triggered": False, "rounds": 0, "verifications": 1,
+               "query": None, "gained": [],
+               "reason": verdict.get("reason")}
+        rec.update(kw)
+        verdict = dict(verdict)
+        verdict["correction"] = rec
+        return verdict
+
+    try:
+        v1 = verify_evidence(question, initial_sources, plan, constraints)
+    except Exception as e:
+        logger.warning("Evidence verification failed open: %s", e)
+        return initial_sources, _record(
+            {"sufficient": True, "reason": "verifier-error",
+             "verification_required": False})
+    if not warrants_correction(question, v1):
+        return initial_sources, _record(v1)
+    cq = corrective_query(question, v1, constraints)
+    if not cq:
+        v1c = _record(v1, reason="no-focused-query")
+        return initial_sources, v1c
+    try:
+        new_hits = retrieve_fn(cq) or []
+    except Exception as e:
+        logger.warning("Corrective retrieval failed open: %s", e)
+        v1c = _record(v1, reason="retrieval-error")
+        return initial_sources, v1c
+    merged, gained = merge_evidence(initial_sources, new_hits)
+    try:
+        v2 = verify_evidence(question, merged, plan, constraints)
+    except Exception as e:
+        logger.warning("Evidence re-verification failed open: %s", e)
+        v1c = _record(v1, reason="reverify-error")
+        return initial_sources, v1c
+    v2c = _record(v2, triggered=True, rounds=1, verifications=2,
+                  query=cq, gained=gained, reason=v2.get("reason"))
+    return merged, v2c

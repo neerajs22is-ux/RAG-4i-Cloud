@@ -55,7 +55,8 @@ _NUMBER_RE = re.compile(
     r"[a-z]*\s+\d{2,4}\b"                          # 15 March 2024
     r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
     r"\s+\d{4}\b"                                  # March 2024
-    r"|\b\d+(?:\.\d+)?\s*(?:" + _UNIT + r")", re.IGNORECASE)
+    r"|\b\d+(?:\.\d+)?\s*(?:" + _UNIT + r")"
+    r"|\b\d{4,}\b", re.IGNORECASE)  # bare 4+ digit number (amounts/years)
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _SENT_RE = re.compile(r"(?<=[.!?])\s+")
 

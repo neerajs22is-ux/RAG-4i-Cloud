@@ -599,12 +599,21 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     level = OVERVIEW_SUPPORT if broad else (
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
     _support_ms = _ms(_s0, time.monotonic())
-    # Evidence verification (Phase 3 core): structured verdict exposed to
-    # the workflow; never alters the answer here and never raises (the
-    # verifier fails open). No re-search yet.
+    # Evidence verification + ONE bounded correction round (Phase 3):
+    # structured verdicts exposed to the workflow; the corrective query
+    # (if warranted) runs through the SAME frozen retrieve_documents
+    # (same k/threshold/scope, planner forms excluded); then STOP.
+    # Never raises, never loops, never changes the answer here.
     try:
-        from evidence_verification import verify_evidence
-        verification = verify_evidence(retrieval_query, retrieved)
+        from evidence_verification import run_bounded_correction
+
+        def _corrective_search(query):
+            return retrieve_documents(
+                query, config=cfg, vector_store=vector_store,
+                session_id=session_id)
+
+        retrieved, verification = run_bounded_correction(
+            retrieval_query, retrieved, _corrective_search)
     except Exception:
         verification = None
     return {"failed": False, "answer": None, "retrieved": retrieved,

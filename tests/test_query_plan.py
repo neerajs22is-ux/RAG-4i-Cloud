@@ -164,6 +164,18 @@ class TestIntegration(unittest.TestCase):
             self.assertEqual(p["mode"], "direct", s["scenario_id"])
             self.assertEqual(p["queries"], [s["query"]], s["scenario_id"])
 
+    def test_trailing_filler_with_punct_stripped(self):
+        # Add-on hardening: "thanks???" must not survive rewriting.
+        from query_plan import plan_query
+        p = plan_query("Hi, can you please tell me about the Riverside "
+                       "lease lock-in period, thanks???")
+        self.assertEqual(p["mode"], "rewrite")
+        self.assertEqual(len(p["queries"]), 1)
+        self.assertNotIn("thanks", p["queries"][0].lower())
+        self.assertNotIn("?", p["queries"][0])
+        for token in ("riverside", "lease", "lock-in", "period"):
+            self.assertIn(token, p["queries"][0].lower())
+
     def test_planner_never_breaks_path(self):
         import backend
         import config

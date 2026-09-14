@@ -33,7 +33,7 @@ _FILLER_LEAD = re.compile(
     r"question\s*:)\b[\s,:]*",
     re.IGNORECASE)
 _FILLER_TRAIL = re.compile(
-    r"[\s.?!]*(?:please|thanks|thank you|thx|asap|urgent)\.?$",
+    r"[\s.?!]*(?:please|thanks|thank you|thx|asap|urgent)[\s.?!]*$",
     re.IGNORECASE)
 _NOISE_PUNCT = re.compile(r"([?!.,;:]){2,}")
 _WS = re.compile(r"\s+")

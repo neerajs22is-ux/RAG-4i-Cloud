@@ -58,13 +58,14 @@ def fan_out_retrieval(plan, retrieve_fn):
     return per_subquery, record
 
 
-def merge_fanout(per_subquery, cap=FANOUT_MERGE_CAP):
+def merge_fanout(per_subquery, cap=FANOUT_MERGE_CAP, tag_prefix="Q"):
     """Deterministic coverage-preferring merge. Never raises.
 
     Each merged chunk is a copy of its structured source plus:
       subqueries: [0-based subquery indices supporting it]
       subquery_ranks: {index: 1-based rank within that subquery}
-      evidence_tag: "Q1" or "Q1+Q3" for generation context labels
+      evidence_tag: "Q1" or "Q1+Q3" (prefix configurable, e.g. "H"
+        for hop provenance) for generation context labels
       retrieval_round: preserved when already set, else 1
     """
     try:
@@ -89,12 +90,13 @@ def merge_fanout(per_subquery, cap=FANOUT_MERGE_CAP):
                             entry["subquery_ranks"][item["index"]] = \
                                 depth + 1
                             entry["evidence_tag"] = _tag(
-                                entry["subqueries"])
+                                entry["subqueries"], prefix=tag_prefix)
                         continue
                     row = dict(src)
                     row["subqueries"] = [item["index"]]
                     row["subquery_ranks"] = {item["index"]: depth + 1}
-                    row["evidence_tag"] = _tag([item["index"]])
+                    row["evidence_tag"] = _tag([item["index"]],
+                                               prefix=tag_prefix)
                     if "retrieval_round" not in row:
                         row["retrieval_round"] = 1
                     by_id[cid] = row
@@ -111,8 +113,8 @@ def merge_fanout(per_subquery, cap=FANOUT_MERGE_CAP):
         return []
 
 
-def _tag(indices):
-    return "+".join("Q%d" % (i + 1) for i in sorted(indices))
+def _tag(indices, prefix="Q"):
+    return "+".join("%s%d" % (prefix, i + 1) for i in sorted(indices))
 
 
 def render_tagged_context(sources):

@@ -1,0 +1,290 @@
+"""Bounded evidence verification (Phase 3, Step 3.1).
+
+Sits AFTER frozen retrieval and BEFORE generation: given the user
+question and the retrieved chunks, it determines whether the evidence
+sufficiently supports the requested facts. Deterministic and
+model-free; reuses answer_support.content_terms and
+groundedness.extract_numbers instead of inventing new NLP.
+
+Verdict classes:
+- SUPPORTED: every checkable atom found in evidence, no conflicts.
+- UNSUPPORTED: checkable atoms exist but evidence is disjoint.
+- INSUFFICIENT: evidence is related yet leaves key atoms uncovered.
+- CONFLICTING: relevant chunks disagree on a number/date or a
+  negated phrase (never resolved by guessing).
+
+Conservative by design: normalized matching (case, possessives,
+digit grouping) recognizes semantic equivalence, while numbers,
+dates, units, negations, qualifiers, and entity names stay distinct.
+The generated answer is NEVER treated as evidence.
+
+Failure is fail-open (mirrors the groundedness gate): any internal
+error yields sufficient=True with reason "verdict-error" so the
+existing answer path keeps working. Bounds: no re-search, no loops,
+no model calls; DECOMPOSE plans are verified per subquery against
+the SAME evidence (fan-out remains deferred by design).
+"""
+
+import logging
+import re
+
+from answer_support import content_terms
+from groundedness import extract_numbers
+
+logger = logging.getLogger(__name__)
+
+VERIFICATION_VERSION = 1
+
+NEGATION_CUES = frozenset({"not", "no", "never", "cannot", "can't"})
+MIN_RELEVANT_SHARED = 1
+# Plain terms use normalized substring/inflection matching (word order,
+# possessives, plurals, and number formats are equivalent). Open
+# synonyms ("lease" vs "agreement") are OUT OF SCOPE for the
+# deterministic core: they fail as insufficient, never as falsely
+# supported. Numbers, quoted spans, and planner constraints are always
+# strict.
+MAX_ATOMS = 20
+MAX_CLAIM_CHARS = 200
+
+_NUM_SEP_RE = re.compile(r"(?<=\d)[,\s](?=\d)")
+_POSSESSIVE_RE = re.compile(r"['\u2019]s\b")
+_WS_RE = re.compile(r"\s+")
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_QUOTED_RE = re.compile(r"\"([^\"]{2,80})\"|'([^']{2,80})'")
+_STOP = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "is", "are",
+    "was", "were", "it", "its", "this", "that", "for", "with", "as",
+    "by", "at", "be", "from", "which", "what", "when", "where", "how",
+    "does", "do", "did", "can", "could", "should", "would", "will",
+    "there", "here", "about",
+})
+
+
+def _norm(text):
+    t = str(text or "").lower()
+    t = _POSSESSIVE_RE.sub("", t)
+    t = _NUM_SEP_RE.sub("", t)
+    return _WS_RE.sub(" ", t).strip()
+
+
+def _tokens(text):
+    return [t for t in _WORD_RE.findall(str(text or "").lower())
+            if t not in _STOP and len(t) > 2]
+
+
+def _inflections(term):
+    yield term
+    if term.endswith("s") and len(term) > 4:
+        yield term[:-1]
+    else:
+        yield term + "s"
+
+
+def _split_value_unit(number_text):
+    m = re.match(r"^([\d.,-]+)\s*(.*)$",
+                 _norm(number_text).strip())
+    if not m:
+        return _norm(number_text), ""
+    return m.group(1).replace(",", ""), m.group(2).strip()
+
+
+def _atoms_of(question, extra_constraints=None):
+    atoms = []
+    seen = set()
+
+    def _add(kind, text):
+        norm = _norm(text)
+        if norm and norm not in seen and len(atoms) < MAX_ATOMS:
+            seen.add(norm)
+            atoms.append({"kind": kind, "text": str(text)[:80],
+                          "norm": norm})
+
+    for num in extract_numbers(question):
+        _add("number", num)
+    for m in _QUOTED_RE.findall(str(question or "")):
+        span = (m[0] or m[1]).strip()
+        if span:
+            _add("quoted", span)
+    for term in content_terms(question):
+        _add("term", term)
+    for c in (extra_constraints or []):
+        _add("constraint", c)
+    return atoms
+
+
+def _chunk_norms(sources):
+    out = []
+    for s in (sources or []):
+        if not isinstance(s, dict):
+            continue
+        content = s.get("content") or ""
+        if not content:
+            continue
+        out.append({
+            "norm": _norm(content),
+            "toks": set(_tokens(content)),
+            "ref": {"chunk_id": s.get("chunk_id"),
+                    "file_name": s.get("file_name"),
+                    "page": s.get("page")},
+        })
+    return out
+
+
+def _term_supported(term_norm, chunk_norm):
+    for variant in _inflections(term_norm):
+        if variant and variant in chunk_norm:
+            return True
+    return False
+
+
+def _atom_supported(atom, chunks):
+    return any((_norm(atom["norm"]) in c["norm"]
+                if atom["kind"] in ("number", "quoted", "constraint")
+                else _term_supported(atom["norm"], c["norm"]))
+               for c in chunks)
+
+
+def _relevant_chunks(q_toks, chunks):
+    return [c for c in chunks
+            if len(set(q_toks) & c["toks"]) >= MIN_RELEVANT_SHARED]
+
+
+def _number_conflicts(question, chunks):
+    """Distinct values, same unit, across relevant chunks."""
+    relevant = _relevant_chunks(_tokens(question), chunks)
+    by_unit = {}
+    for c in relevant:
+        seen_here = set()
+        for num in extract_numbers(c["norm"]):
+            value, unit = _split_value_unit(num)
+            if not value or (unit, value) in seen_here:
+                continue
+            seen_here.add((unit, value))
+            by_unit.setdefault(unit, {}).setdefault(value, set()).add(
+                c["ref"].get("chunk_id"))
+    conflicts = []
+    for unit, values in sorted(by_unit.items()):
+        if len(values) > 1:
+            vals = sorted(values)
+            conflicts.append(
+                "conflicting %s: %s" % (
+                    unit or "value",
+                    " vs ".join(vals)[:MAX_CLAIM_CHARS]))
+    return conflicts
+
+
+def _bigrams(toks):
+    seq = sorted(toks)
+    return set(zip(seq, seq[1:]))
+
+
+def _negation_conflicts(question, chunks):
+    """One relevant chunk negates a phrase another affirms."""
+    relevant = _relevant_chunks(_tokens(question), chunks)
+    neg = [c for c in relevant
+           if any(re.search(r"\b" + re.escape(q) + r"\b", c["norm"])
+                  for q in NEGATION_CUES)]
+    pos = [c for c in relevant if c not in neg]
+    conflicts = []
+    for n in neg:
+        for p in pos:
+            shared = _bigrams(n["toks"]) & _bigrams(p["toks"])
+            if shared:
+                conflicts.append(
+                    "negation conflict on shared phrase "
+                    "(see %s vs %s)" % (
+                        n["ref"].get("chunk_id"),
+                        p["ref"].get("chunk_id")))
+                break
+        if conflicts:
+            break
+    return conflicts
+
+
+def _verify_one(question, chunks, extra_constraints=None):
+    atoms = _atoms_of(question, extra_constraints)
+    refs = [c["ref"] for c in chunks]
+    base = {"supported_claims": [], "unsupported_claims": [],
+            "conflicting_claims": [], "evidence_refs": refs}
+    if not chunks:
+        base.update(sufficient=False, confidence="low",
+                    reason="no-evidence", verification_required=False)
+        return base
+    if not atoms:
+        base.update(sufficient=True, confidence="high",
+                    reason="no-checkable-claims",
+                    verification_required=False)
+        return base
+    for atom in atoms:
+        (base["supported_claims"]
+         if _atom_supported(atom, chunks)
+         else base["unsupported_claims"]).append(atom["text"])
+    conflicts = _number_conflicts(question, chunks)
+    conflicts += _negation_conflicts(question, chunks)
+    base["conflicting_claims"] = conflicts[:4]
+    if conflicts:
+        base.update(sufficient=False, confidence="low",
+                    reason="conflicting-evidence",
+                    verification_required=True)
+    elif base["unsupported_claims"]:
+        q_toks = set(_tokens(question))
+        disjoint = all(not (q_toks & c["toks"]) for c in chunks)
+        base.update(
+            sufficient=False,
+            confidence="low" if disjoint else "medium",
+            reason="unsupported-claims" if disjoint
+            else "insufficient-evidence",
+            verification_required=True)
+    else:
+        base.update(sufficient=True, confidence="high",
+                    reason="all-supported",
+                    verification_required=True)
+    return base
+
+
+def verify_evidence(question, sources, plan=None, constraints=None):
+    """Verify retrieved evidence before generation. Never raises.
+
+    sources: structured dicts (content/chunk_id/file_name/page).
+    plan: optional planner dict; DECOMPOSE verifies each subquery
+      against the same evidence and merges the verdicts.
+    Returns the bounded verification result (sufficient, claim lists,
+    evidence_refs, confidence, reason, verification_required).
+    """
+    try:
+        chunks = _chunk_norms(sources)
+        mode = (plan or {}).get("mode") if isinstance(plan, dict) else None
+        subqueries = ((plan or {}).get("queries") or []) \
+            if mode == "decompose" else []
+        if subqueries:
+            merged = {"supported_claims": [], "unsupported_claims": [],
+                      "conflicting_claims": [],
+                      "evidence_refs": [c["ref"] for c in chunks],
+                      "subqueries": []}
+            ok = True
+            for sub in subqueries[:3]:
+                one = _verify_one(sub, chunks, constraints)
+                merged["subqueries"].append(
+                    {"query": sub, "sufficient": one["sufficient"],
+                     "reason": one["reason"]})
+                for key in ("supported_claims", "unsupported_claims",
+                            "conflicting_claims"):
+                    for item in one[key]:
+                        if item not in merged[key]:
+                            merged[key].append(item)
+                ok = ok and one["sufficient"]
+            merged["sufficient"] = ok
+            merged["confidence"] = "high" if ok else "medium"
+            merged["reason"] = ("all-subqueries-supported" if ok
+                                else "subquery-evidence-gap")
+            merged["verification_required"] = True
+            return merged
+        result = _verify_one(question, chunks, constraints)
+        result["subqueries"] = []
+        return result
+    except Exception as e:
+        logger.warning("Evidence verification failed open: %s", e)
+        return {"sufficient": True, "supported_claims": [],
+                "unsupported_claims": [], "conflicting_claims": [],
+                "evidence_refs": [], "subqueries": [], "confidence": "low",
+                "reason": "verifier-error", "verification_required": False}

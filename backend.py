@@ -478,7 +478,8 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     Runs routing (already done by caller), retrieval (exactly once),
     support assessment, and prompt selection. Returns a dict with:
       failed (bool), answer (str|None: set when decided without the LLM),
-      retrieved, support_level, provider.
+      retrieved, support_level, provider, verification (structured
+      evidence verdict on the generation path, None on decided paths).
     UNSUPPORTED never reaches generation: answer is set, no LLM needed.
     PARTIAL with missing terms yields one deterministic clarification
     (never a loop: confirmations resolve to the original question first).
@@ -561,7 +562,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
             "The knowledge base is unavailable. Please build the index first "
             "and check that the vector database is accessible."),
             "retrieved": [], "support_level": None, "provider": provider,
-            "effective": effective,
+            "effective": effective, "verification": None,
             "timings": {"retrieval_ms": _retrieval_ms, "support_ms": 0,
                         "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     _retrieval_ms = _ms(_r0, time.monotonic())
@@ -569,7 +570,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     if not retrieved:
         return {"failed": False, "answer": LOW_RELEVANCE_MESSAGE,
                 "retrieved": [], "support_level": None, "provider": provider,
-                "effective": effective,
+                "effective": effective, "verification": None,
                 "timings": {"retrieval_ms": _retrieval_ms, "support_ms": 0,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     support = assess_support(retrieval_query, retrieved)
@@ -578,6 +579,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         return {"failed": False, "answer": unsupported_reply(effective),
                 "retrieved": retrieved, "support_level": None,
                 "provider": provider, "effective": effective,
+                "verification": None,
                 "timings": {"retrieval_ms": _retrieval_ms,
                             "support_ms": _support_ms,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
@@ -590,15 +592,24 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
                     effective, support, retrieved),
                 "retrieved": retrieved, "support_level": None,
                 "provider": provider, "effective": effective,
+                "verification": None,
                 "timings": {"retrieval_ms": _retrieval_ms,
                             "support_ms": _support_ms,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     level = OVERVIEW_SUPPORT if broad else (
         None if support["level"] == DIRECT else PARTIAL_SUPPORT)
     _support_ms = _ms(_s0, time.monotonic())
+    # Evidence verification (Phase 3 core): structured verdict exposed to
+    # the workflow; never alters the answer here and never raises (the
+    # verifier fails open). No re-search yet.
+    try:
+        from evidence_verification import verify_evidence
+        verification = verify_evidence(retrieval_query, retrieved)
+    except Exception:
+        verification = None
     return {"failed": False, "answer": None, "retrieved": retrieved,
             "support_level": level, "provider": provider,
-            "effective": effective,
+            "effective": effective, "verification": verification,
             "timings": {"retrieval_ms": _retrieval_ms,
                         "support_ms": _support_ms,
                         "preparation_ms": _ms(_prep_t0, time.monotonic())}}

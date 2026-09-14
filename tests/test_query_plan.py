@@ -149,6 +149,21 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(hits)
         self.assertEqual(hits[0]["file_name"], "c.pdf")
 
+    def test_benchmark_suite_stays_direct(self):
+        # Step 2.2 lock: all 40 frozen scenario queries are single-intent
+        # lookups the planner must leave verbatim (no rewrite/decompose).
+        import json
+        path = os.path.join(os.path.dirname(__file__), "benchmarks",
+                            "scenarios_v1.json")
+        with open(path, encoding="utf-8") as f:
+            scenarios = json.load(f)["scenarios"]
+        self.assertEqual(len(scenarios), 40)
+        from query_plan import plan_query
+        for s in scenarios:
+            p = plan_query(s["query"])
+            self.assertEqual(p["mode"], "direct", s["scenario_id"])
+            self.assertEqual(p["queries"], [s["query"]], s["scenario_id"])
+
     def test_planner_never_breaks_path(self):
         import backend
         import config

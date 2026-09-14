@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -242,6 +243,38 @@ def run_reviewer_isolation(reviewer_bundle, snapshot, answer,
             "schema_valid": verdict is not None and failure is None}
 
 
+_NUM_SEP_RE = re.compile(r"(?<=\d)[,\s](?=\d)")
+_POSSESSIVE_RE = re.compile(r"['\u2019]s\b")
+
+
+def _normalize_grade_text(s):
+    """Lowercase + whitespace collapse + formatting-only equivalence.
+
+    - Digit grouping separators vanish: 450,000,000 -> 450000000.
+    - Possessives vanish: one month's salary -> one month salary.
+    Nothing else is altered: different numbers, units, negations and
+    qualifiers are preserved exactly.
+    """
+    t = str(s or "").lower()
+    t = _POSSESSIVE_RE.sub("", t)
+    t = _NUM_SEP_RE.sub("", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _fact_present(fact, normalized_answer):
+    """True when the whole normalized fact occurs on token boundaries.
+
+    Boundary matching (instead of substring) stops partial numbers from
+    matching: required 1000000 does not match an answer holding 10000000,
+    and forbidden Rs 45000000 does not fire on a correct Rs 450000000.
+    """
+    f = _normalize_grade_text(fact)
+    if not f:
+        return False
+    return re.search(r"(?<!\w)" + re.escape(f) + r"(?!\w)",
+                     normalized_answer) is not None
+
+
 def grade_deterministic(scenario, answer, sources, info, evidence,
                         planner_out=None, reviewer_out=None,
                         repair_count=0):
@@ -249,13 +282,13 @@ def grade_deterministic(scenario, answer, sources, info, evidence,
     from answer_support import assess_support, citation_guard
     failures = []
     cats = []
-    ans_low = (answer or "").lower()
+    ans_norm = _normalize_grade_text(answer)
     for fact in scenario.get("required_facts", []):
-        if fact.lower() not in ans_low:
+        if not _fact_present(fact, ans_norm):
             failures.append("missing required fact: %s" % fact[:60])
             cats.append("MISSED_REQUESTED_ASPECT")
     for banned in scenario.get("forbidden_claims", []):
-        if banned.lower() in ans_low:
+        if _fact_present(banned, ans_norm):
             failures.append("forbidden claim in answer: %s" % banned[:60])
             cats.append("UNSUPPORTED_CLAIM")
     cited = {(s or {}).get("file_name") for s in (sources or [])}

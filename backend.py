@@ -367,6 +367,7 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
     scoping prompt; DIRECT keeps the original prompt unchanged.
     """
     from llm_provider import get_llm_provider
+    from evidence_fanout import render_tagged_context
     from output_safety import is_empty_response, strip_think_blocks
 
     cfg = config or get_config()
@@ -374,7 +375,9 @@ def generate_answer(question, retrieved_sources, config=None, llm_provider=None,
         if prompt_template is None else prompt_template
     if not retrieved_sources:
         return LOW_RELEVANCE_MESSAGE
-    context_text = "\n\n---\n\n".join([s.get("content", "") for s in retrieved_sources])
+    # Evidence carries [Qn] tags only when merged from fan-out;
+    # untagged sources render byte-identically to before.
+    context_text = render_tagged_context(retrieved_sources)
     provider = llm_provider or get_llm_provider(cfg)
     try:
         raw = provider.generate(context_text, question, template)
@@ -499,6 +502,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     from document_scope import validate_session_id
     from embeddings import get_embedding_provider
     from llm_provider import get_llm_provider
+    from query_plan import plan_query
     from query_router import DOCUMENT_FOLLOWUP, expand_followup_query
     from vector_store import get_vector_store
 
@@ -527,11 +531,32 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
     if on_phase is not None:
         on_phase("retrieving")
     _r0 = time.monotonic()
+    # Phase 4 fan-out: DECOMPOSE plans retrieve each subquery
+    # independently through the frozen path below; anything else keeps
+    # the exact single-retrieval behavior. plan_query never raises.
     try:
-        retrieved = retrieve_documents(
-            retrieval_query, config=cfg, vector_store=vector_store,
-            session_id=session_id, extra_forms=extra_forms,
-        )
+        _plan = plan_query(retrieval_query)
+    except Exception:
+        _plan = {"mode": "direct", "original_query": retrieval_query,
+                 "queries": [retrieval_query], "rationale": "fallback",
+                 "constraints": []}
+    fanout = None
+    try:
+        if _plan.get("mode") == "decompose":
+            from evidence_fanout import fan_out_retrieval, merge_fanout
+
+            def _sub_retrieve(subquery):
+                return retrieve_documents(
+                    subquery, config=cfg, vector_store=vector_store,
+                    session_id=session_id, extra_forms=extra_forms)
+
+            _per_sub, fanout = fan_out_retrieval(_plan, _sub_retrieve)
+            retrieved = merge_fanout(_per_sub)
+        else:
+            retrieved = retrieve_documents(
+                retrieval_query, config=cfg, vector_store=vector_store,
+                session_id=session_id, extra_forms=extra_forms,
+            )
         if broad and target_file:
             # Source-aware top-up: same-file chunks as admissible file
             # evidence (threshold still guards query-similarity results).
@@ -562,7 +587,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
             "The knowledge base is unavailable. Please build the index first "
             "and check that the vector database is accessible."),
             "retrieved": [], "support_level": None, "provider": provider,
-            "effective": effective, "verification": None,
+            "effective": effective, "verification": None, "fanout": fanout,
             "timings": {"retrieval_ms": _retrieval_ms, "support_ms": 0,
                         "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     _retrieval_ms = _ms(_r0, time.monotonic())
@@ -571,6 +596,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         return {"failed": False, "answer": LOW_RELEVANCE_MESSAGE,
                 "retrieved": [], "support_level": None, "provider": provider,
                 "effective": effective, "verification": None,
+                "fanout": fanout,
                 "timings": {"retrieval_ms": _retrieval_ms, "support_ms": 0,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
     support = assess_support(retrieval_query, retrieved)
@@ -579,7 +605,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
         return {"failed": False, "answer": unsupported_reply(effective),
                 "retrieved": retrieved, "support_level": None,
                 "provider": provider, "effective": effective,
-                "verification": None,
+                "verification": None, "fanout": fanout,
                 "timings": {"retrieval_ms": _retrieval_ms,
                             "support_ms": _support_ms,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
@@ -592,7 +618,7 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
                     effective, support, retrieved),
                 "retrieved": retrieved, "support_level": None,
                 "provider": provider, "effective": effective,
-                "verification": None,
+                "verification": None, "fanout": fanout,
                 "timings": {"retrieval_ms": _retrieval_ms,
                             "support_ms": _support_ms,
                             "preparation_ms": _ms(_prep_t0, time.monotonic())}}
@@ -613,12 +639,13 @@ def _prepare_generation(query_text, cfg, vector_store, llm_provider,
                 session_id=session_id)
 
         retrieved, verification = run_bounded_correction(
-            retrieval_query, retrieved, _corrective_search)
+            retrieval_query, retrieved, _corrective_search, plan=_plan)
     except Exception:
         verification = None
     return {"failed": False, "answer": None, "retrieved": retrieved,
             "support_level": level, "provider": provider,
             "effective": effective, "verification": verification,
+            "fanout": fanout,
             "timings": {"retrieval_ms": _retrieval_ms,
                         "support_ms": _support_ms,
                         "preparation_ms": _ms(_prep_t0, time.monotonic())}}

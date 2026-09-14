@@ -307,6 +307,7 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
     """
     from document_scope import validate_session_id
     from embeddings import get_embedding_provider
+    from query_plan import effective_retrieval_query
     from vector_store import get_vector_store
 
     if session_id is not None:
@@ -322,7 +323,10 @@ def retrieve_documents(query_text, config=None, vector_store=None, k=None,
     # Raises if DB missing/unavailable -> caller maps to user message.
     best = {}
     order = []
-    forms = build_query_forms(query_text)
+    # Step 2.1 planner: DIRECT is byte-identical to today; REWRITE flows
+    # its single cleaned query through the same forms pipeline below.
+    # DECOMPOSE fan-out is deferred, so it also yields the original here.
+    forms = build_query_forms(effective_retrieval_query(query_text))
     for extra in extra_forms or []:
         cleaned = (extra or "").strip()
         if cleaned and cleaned not in forms:

@@ -107,7 +107,7 @@ class LMStudioProvider(LLMProvider):
 
 
 def get_llm_provider(config=None) -> LLMProvider:
-    """Factory dispatching on config (lmstudio default; bedrock opt-in).
+    """Factory dispatching on config (lmstudio default; bedrock opt-ins).
 
     Unknown LLM_PROVIDER values raise loudly: providers are never
     substituted silently.
@@ -123,10 +123,18 @@ def get_llm_provider(config=None) -> LLMProvider:
             region=getattr(config, "bedrock_region", "us-east-1") if config is not None else "us-east-1",
             temperature=getattr(config, "llm_temperature", 0.0) if config is not None else 0.0,
         )
+    if name == "bedrock-mantle":
+        from bedrock_mantle_provider import BedrockMantleProvider
+
+        return BedrockMantleProvider(
+            model_id=getattr(config, "answer_model_id", "") if config is not None else "",
+            region=getattr(config, "bedrock_region", "ap-south-1") if config is not None else "ap-south-1",
+            temperature=getattr(config, "llm_temperature", 0.0) if config is not None else 0.0,
+        )
     if name == "lmstudio":
         return _lmstudio_provider(config)
     raise ValueError(
-        f"Unknown LLM_PROVIDER: {name!r} (expected 'lmstudio' or 'bedrock').")
+        f"Unknown LLM_PROVIDER: {name!r} (expected 'lmstudio', 'bedrock' or 'bedrock-mantle').")
 
 
 def _lmstudio_provider(config=None) -> LLMProvider:

@@ -9,3 +9,5 @@ streamlit
 psycopg2-binary
 pgvector
 boto3
+openai
+aws-bedrock-token-generator
